@@ -1,0 +1,33 @@
+{
+  "name": "traces",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "tsx --test tests/**/*.test.ts",
+    "trace": "tsx bin/trace-cli.ts"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.12.0",
+    "dagre": "^0.8.5",
+    "jszip": "^3.10.2",
+    "lucide-react": "^1.55.0",
+    "next": "16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/dagre": "^0.7.54",
+    "@types/jszip": "^3.4.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}
