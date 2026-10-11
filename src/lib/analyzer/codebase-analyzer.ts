@@ -7,6 +7,7 @@ import {
   AnalysisWarning,
 } from '../types/trace';
 import { TypeScriptAdapter, FileAnalysisOutput } from './typescript-adapter';
+import { EcosystemRegistry } from '../dependencies/registry';
 
 export type AnalyzerProgressCallback = (
   stage: string,
@@ -281,6 +282,21 @@ export class CodebaseAnalyzer {
     const dbQueriesCount = Object.values(allEntities).filter((e) => e.kind === 'db_query').length;
     const totalLines = Object.values(files).reduce((acc, f) => acc + f.lines, 0);
 
+    // Phase 5: Multi-Ecosystem Dependency Intelligence Scan
+    const depScanner = EcosystemRegistry.getInstance();
+    const depResult = depScanner.scanRepositorySync(files);
+    if (depResult.discoveredFiles.length > 0) {
+      for (const diag of depResult.diagnostics) {
+        if (diag.severity === 'error' || diag.severity === 'warning') {
+          allWarnings.push({
+            filePath: diag.filePath,
+            message: `[${diag.code}] ${diag.message}`,
+            severity: diag.severity,
+          });
+        }
+      }
+    }
+
     return {
       projectId: `proj_${Date.now()}`,
       projectName,
@@ -306,6 +322,7 @@ export class CodebaseAnalyzer {
         'External library types and internals are represented as boundary nodes.',
         'Conditional branches and exception paths are statically detected as potential branches without runtime predicate evaluation.',
       ],
+      dependencies: depResult,
     };
   }
 

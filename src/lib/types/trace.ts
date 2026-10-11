@@ -212,7 +212,10 @@ export interface ProjectAnalysis {
   files: Record<string, FileRecord>;
   warnings: AnalysisWarning[];
   limitations: string[];
+  dependencies?: import('../dependencies/types').DependencyScanResult;
 }
+
+export * from '../dependencies/types';
 
 export interface SearchQuery {
   term: string;
