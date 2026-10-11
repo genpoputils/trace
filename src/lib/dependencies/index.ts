@@ -5,5 +5,6 @@
 export * from './types';
 export * from './capability-matrix';
 export * from './registry';
+export * from './provenance';
 export * from './utils';
 export * from './adapters';

@@ -16,6 +16,7 @@ import {
 } from '../types';
 import { getEcosystemCapability } from '../capability-matrix';
 import { getDirname, getBasename, parseSimpleYaml } from '../utils';
+import { buildDependencyProvenance, detectInstalledVersion } from '../provenance';
 
 export class JavaScriptAdapter implements EcosystemAdapter {
   public readonly ecosystem = 'javascript' as const;
@@ -32,6 +33,9 @@ export class JavaScriptAdapter implements EcosystemAdapter {
   }
 
   public matches(filePath: string): boolean {
+    if (filePath.includes('/node_modules/') || filePath.startsWith('node_modules/')) {
+      return false;
+    }
     const base = getBasename(filePath);
     if (this.packageManager === 'npm') {
       return (
@@ -57,7 +61,11 @@ export class JavaScriptAdapter implements EcosystemAdapter {
   }
 
   public classifyFile(filePath: string): DiscoveredDependencyFile | null {
+    if (filePath.includes('/node_modules/') || filePath.startsWith('node_modules/')) {
+      return null;
+    }
     const base = getBasename(filePath);
+
     const dir = getDirname(filePath);
     const workspacePath = dir === '.' ? undefined : dir;
 
@@ -274,7 +282,31 @@ export class JavaScriptAdapter implements EcosystemAdapter {
 
     // 5. Assemble normalized direct dependencies
     for (const [depName, { rawSpecifier, scope }] of declaredMap.entries()) {
-      const resolved = resolvedMap.get(depName);
+      let alias: string | undefined;
+      let targetLookupName = depName;
+      let effectiveSpec = rawSpecifier;
+
+      // Handle npm aliases, e.g. "my-lodash": "npm:lodash@^4.17.21"
+      if (rawSpecifier.startsWith('npm:')) {
+        const aliasSpec = rawSpecifier.slice(4);
+        const atIdx = aliasSpec.lastIndexOf('@');
+        if (atIdx > 0) {
+          targetLookupName = aliasSpec.slice(0, atIdx);
+          effectiveSpec = aliasSpec.slice(atIdx + 1);
+          alias = depName;
+        } else {
+          targetLookupName = aliasSpec;
+          alias = depName;
+        }
+      }
+
+      const resolved = resolvedMap.get(depName) || resolvedMap.get(targetLookupName);
+
+      // Check for local installed disk evidence in node_modules
+      const installed =
+        detectInstalledVersion(targetLookupName, 'javascript', dir, context.getFile) ||
+        (alias ? detectInstalledVersion(alias, 'javascript', dir, context.getFile) : undefined);
+
       const evidence: DependencyEvidence[] = [
         {
           sourceFilePath: manifestFile.path,
@@ -296,14 +328,52 @@ export class JavaScriptAdapter implements EcosystemAdapter {
         });
       }
 
-      const depId = `javascript:${effectivePm}:${depName}@${manifestFile.path}`;
+      if (installed) {
+        evidence.push({
+          sourceFilePath: installed.sourceFilePath,
+          sourceKind: 'installed',
+          evidenceKind: 'installed_disk',
+          resolvedVersion: installed.version,
+        });
+      }
+
+      const provenance = buildDependencyProvenance({
+        name: targetLookupName,
+        ecosystem: 'javascript',
+        packageManager: effectivePm,
+        manifestPath: manifestFile.path,
+        lockfilePath,
+        declaredSpecifier: effectiveSpec,
+        resolvedVersion: resolved?.resolvedVersion,
+        integrity: resolved?.integrity,
+        resolvedUrl: resolved?.resolvedUrl,
+        isDirect: true,
+        alias,
+        getFile: context.getFile,
+        findFile: context.findFile,
+      });
+
+      if (provenance.hasConflict) {
+        for (const c of provenance.conflicts) {
+          diagnostics.push({
+            filePath: manifestFile.path,
+            severity: c.severity,
+            code: 'version_conflict',
+            message: `[${targetLookupName}] ${c.message}`,
+          });
+        }
+      }
+
+      const depId = `javascript:${effectivePm}:${targetLookupName}@${manifestFile.path}`;
       dependencies.push({
         id: depId,
         ecosystem: 'javascript',
         packageManager: effectivePm,
-        name: depName,
-        versionDeclared: rawSpecifier,
+        name: targetLookupName,
+        versionDeclared: effectiveSpec,
         versionResolved: resolved?.resolvedVersion,
+        versionInstalled: installed?.version,
+        alias,
         scope,
         isDirect: true,
         isTransitive: false,
@@ -311,13 +381,17 @@ export class JavaScriptAdapter implements EcosystemAdapter {
         lockfilePath,
         workspacePath,
         evidence,
+        provenance,
       });
+
     }
 
     // 6. Transitive dependencies (resolved in lockfile but not in manifest)
     if (lockfilePath && resolvedMap.size > 0) {
       for (const [depName, resolved] of resolvedMap.entries()) {
         if (!declaredMap.has(depName)) {
+          const installed = detectInstalledVersion(depName, 'javascript', dir, context.getFile);
+
           const evidence: DependencyEvidence[] = [
             {
               sourceFilePath: lockfilePath,
@@ -329,6 +403,29 @@ export class JavaScriptAdapter implements EcosystemAdapter {
             },
           ];
 
+          if (installed) {
+            evidence.push({
+              sourceFilePath: installed.sourceFilePath,
+              sourceKind: 'installed',
+              evidenceKind: 'installed_disk',
+              resolvedVersion: installed.version,
+            });
+          }
+
+          const provenance = buildDependencyProvenance({
+            name: depName,
+            ecosystem: 'javascript',
+            packageManager: effectivePm,
+            manifestPath: manifestFile.path,
+            lockfilePath,
+            declaredSpecifier: undefined,
+            resolvedVersion: resolved.resolvedVersion,
+            integrity: resolved.integrity,
+            resolvedUrl: resolved.resolvedUrl,
+            isDirect: false,
+            getFile: context.getFile,
+          });
+
           dependencies.push({
             id: `javascript:${effectivePm}:${depName}:transitive@${lockfilePath}`,
             ecosystem: 'javascript',
@@ -336,6 +433,7 @@ export class JavaScriptAdapter implements EcosystemAdapter {
             name: depName,
             versionDeclared: undefined,
             versionResolved: resolved.resolvedVersion,
+            versionInstalled: installed?.version,
             scope: 'runtime',
             isDirect: false,
             isTransitive: true,
@@ -343,6 +441,7 @@ export class JavaScriptAdapter implements EcosystemAdapter {
             lockfilePath,
             workspacePath,
             evidence,
+            provenance,
           });
         }
       }

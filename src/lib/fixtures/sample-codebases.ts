@@ -358,4 +358,103 @@ describe('Order Service Tests', () => {
 });
 `,
   },
+
+  'package.json': {
+    path: 'package.json',
+    language: 'json',
+    lines: 28,
+    size: 680,
+    content: JSON.stringify(
+      {
+        name: 'sample-ecommerce-api',
+        version: '1.0.0',
+        description: 'GenPopUtils Sample E-Commerce Order & Auth Backend',
+        dependencies: {
+          '@prisma/client': '^5.0.0',
+          express: '^4.18.2',
+          jsonwebtoken: '^9.0.0',
+        },
+        devDependencies: {
+          '@types/express': '^4.17.17',
+          jest: '^29.5.0',
+          typescript: '^5.0.0',
+        },
+      },
+      null,
+      2
+    ),
+  },
+
+  'package-lock.json': {
+    path: 'package-lock.json',
+    language: 'json',
+    lines: 75,
+    size: 2100,
+    content: JSON.stringify(
+      {
+        name: 'sample-ecommerce-api',
+        version: '1.0.0',
+        lockfileVersion: 3,
+        packages: {
+          '': {
+            name: 'sample-ecommerce-api',
+            version: '1.0.0',
+            dependencies: {
+              '@prisma/client': '^5.0.0',
+              express: '^4.18.2',
+              jsonwebtoken: '^9.0.0',
+            },
+            devDependencies: {
+              '@types/express': '^4.17.17',
+              jest: '^29.5.0',
+              typescript: '^5.0.0',
+            },
+          },
+          'node_modules/@prisma/client': {
+            version: '5.0.0',
+            resolved: 'https://registry.npmjs.org/@prisma/client/-/client-5.0.0.tgz',
+            integrity: 'sha512-prisma500==',
+          },
+          'node_modules/express': {
+            version: '4.18.2',
+            resolved: 'https://registry.npmjs.org/express/-/express-4.18.2.tgz',
+            integrity: 'sha512-5/PsL6iVEkiGu9P0Y630FY9z01WDhU3u/0EQ2tu3ylP0d5rE5QD9cz1cA3P9czSgCUCKE491D2Jq4TXN3KxQ==',
+          },
+          'node_modules/jsonwebtoken': {
+            version: '9.0.2',
+            resolved: 'https://registry.npmjs.org/jsonwebtoken/-/jsonwebtoken-9.0.2.tgz',
+            integrity: 'sha512-jwt902==',
+          },
+          'node_modules/@types/express': {
+            version: '4.17.17',
+            resolved: 'https://registry.npmjs.org/@types/express/-/express-4.17.17.tgz',
+            integrity: 'sha512-express41717==',
+          },
+          'node_modules/jest': {
+            version: '29.5.0',
+            resolved: 'https://registry.npmjs.org/jest/-/jest-29.5.0.tgz',
+            integrity: 'sha512-jest2950==',
+          },
+          'node_modules/typescript': {
+            version: '5.0.4',
+            resolved: 'https://registry.npmjs.org/typescript/-/typescript-5.0.4.tgz',
+            integrity: 'sha512-ts504==',
+          },
+          'node_modules/cookie': {
+            version: '0.5.0',
+            resolved: 'https://registry.npmjs.org/cookie/-/cookie-0.5.0.tgz',
+            integrity: 'sha512-cookie050==',
+          },
+          'node_modules/ms': {
+            version: '2.1.3',
+            resolved: 'https://registry.npmjs.org/ms/-/ms-2.1.3.tgz',
+            integrity: 'sha512-ms213==',
+          },
+        },
+      },
+      null,
+      2
+    ),
+  },
 };
+

@@ -75,7 +75,10 @@ export type DiagnosticCode =
   | 'incomplete_scan'
   | 'conflicting_manifests'
   | 'unsupported_feature'
-  | 'empty_manifest';
+  | 'empty_manifest'
+  | 'version_conflict'
+  | 'stale_lockfile'
+  | 'missing_installed_environment';
 
 export interface DependencyEvidence {
   sourceFilePath: string;
@@ -89,6 +92,56 @@ export interface DependencyEvidence {
   snippet?: string;
 }
 
+export type VersionProvenanceStatus =
+  | 'established' // Concrete evidence found and verified
+  | 'unavailable' // No evidence available (e.g. missing lockfile, no installed environment)
+  | 'incomplete' // Evidence is partial or unverified
+  | 'conflicting'; // Conflict between declared range and resolved lockfile, or between manifests
+
+export interface VersionProvenanceDetail {
+  version?: string;
+  status: VersionProvenanceStatus;
+  sourceFilePath?: string;
+  sourcePath?: string; // Convenient alias for sourceFilePath
+  sourceKind?: 'manifest' | 'lockfile' | 'installed' | 'workspace_config' | 'checksum_file';
+  evidenceKind?: EvidenceKind;
+  rawSpecifier?: string;
+  isExactPin?: boolean;
+  isRange?: boolean;
+  integrity?: string;
+  resolvedUrl?: string;
+  details?: string;
+}
+
+export type VersionConflictKind =
+  | 'range_mismatch' // Lockfile resolved version does not satisfy declared range/pin
+  | 'workspace_version_conflict' // Multiple workspaces declare incompatible versions
+  | 'duplicate_version_in_workspace' // Same package resolved or declared at multiple different versions across tree
+  | 'missing_lockfile_resolution' // Declared in manifest but missing in lockfile
+  | 'stale_lockfile' // Lockfile exists but is outdated or missing entries
+  | 'stale_installed_disk' // Installed disk version does not match lockfile or manifest
+  | 'none';
+
+export interface VersionConflict {
+  kind: VersionConflictKind;
+  severity: 'warning' | 'error' | 'info';
+  message: string;
+  expectedRange?: string;
+  actualVersion?: string;
+  conflictingSourcePaths?: string[];
+}
+
+export interface DependencyVersionProvenance {
+  status: VersionProvenanceStatus;
+  satisfiesRange?: boolean;
+  declared: VersionProvenanceDetail;
+  resolved: VersionProvenanceDetail;
+  installed: VersionProvenanceDetail;
+  hasConflict: boolean;
+  conflicts: VersionConflict[];
+}
+
+
 export interface NormalizedDependency {
   id: string; // unique stable identifier e.g. "javascript:npm:express@package.json"
   ecosystem: EcosystemType;
@@ -96,6 +149,8 @@ export interface NormalizedDependency {
   name: string;
   versionDeclared?: string;
   versionResolved?: string;
+  versionInstalled?: string; // ONLY when local installed disk/env evidence exists
+  alias?: string; // Alias or package rename if applicable
   scope: DependencyScope;
   isDirect: boolean;
   isTransitive: boolean;
@@ -103,6 +158,7 @@ export interface NormalizedDependency {
   lockfilePath?: string;
   workspacePath?: string;
   evidence: DependencyEvidence[];
+  provenance?: DependencyVersionProvenance;
   notes?: string[];
   warnings?: string[];
 }
@@ -158,9 +214,11 @@ export interface EcosystemCapability {
 
 export interface AdapterParseContext {
   getFile: (filePath: string) => { path: string; content: string } | undefined;
+  findFile?: (predicate: (path: string) => boolean) => { path: string; content: string } | undefined;
   discoveredFiles: DiscoveredDependencyFile[];
   workspaces: WorkspaceDescriptor[];
 }
+
 
 export interface AdapterParseResult {
   dependencies: NormalizedDependency[];
@@ -198,6 +256,10 @@ export interface DependencyScanResult {
     directCount: number;
     transitiveCount: number;
     ecosystemCounts: Record<EcosystemType, number>;
+    withResolvedVersionCount: number;
+    declaredOnlyCount: number;
+    withInstalledVersionCount: number;
+    conflictsCount: number;
   };
   capabilityMatrix: EcosystemCapability[];
 }

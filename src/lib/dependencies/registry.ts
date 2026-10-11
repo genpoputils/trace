@@ -31,6 +31,7 @@ import {
   ElixirAdapter,
 } from './adapters';
 import { getDirname } from './utils';
+import { buildDependencyProvenance, reconcileWorkspaceProvenance } from './provenance';
 
 export class EcosystemRegistry {
   private adapters: EcosystemAdapter[] = [];
@@ -195,12 +196,19 @@ export class EcosystemRegistry {
     // Filter manifests to parse
     const manifestFiles = discoveredFiles.filter((df) => df.kind === 'manifest');
 
+    const findFile = (predicate: (path: string) => boolean) => {
+      const foundPath = filePaths.find((p) => predicate(p.replace(/\\/g, '/').replace(/^\/+/, '')));
+      return foundPath ? getFile(foundPath) : undefined;
+    };
+
     // Context for adapters
     const context: AdapterParseContext = {
       getFile,
+      findFile,
       discoveredFiles,
       workspaces: allWorkspaces,
     };
+
 
     // If multiple manifests for different ecosystems are present, scan each
     for (const manifestInfo of manifestFiles) {
@@ -226,6 +234,24 @@ export class EcosystemRegistry {
         } else {
           const syncResult = result as AdapterParseResult;
           for (const dep of syncResult.dependencies) {
+            // Ensure provenance is attached even if a custom adapter omitted it
+            if (!dep.provenance) {
+              dep.provenance = buildDependencyProvenance({
+                name: dep.name,
+                ecosystem: dep.ecosystem,
+                packageManager: dep.packageManager,
+                manifestPath: dep.manifestPath,
+                lockfilePath: dep.lockfilePath,
+                declaredSpecifier: dep.versionDeclared,
+                resolvedVersion: dep.versionResolved,
+                isDirect: dep.isDirect,
+                alias: dep.alias,
+                getFile,
+              });
+            }
+            if (dep.provenance.installed.version && !dep.versionInstalled) {
+              dep.versionInstalled = dep.provenance.installed.version;
+            }
             allDependencies.push(dep);
           }
           for (const ws of syncResult.workspaces) {
@@ -243,6 +269,12 @@ export class EcosystemRegistry {
           message: `Unhandled exception during adapter parse: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
+    }
+
+    // Cross-manifest and workspace provenance reconciliation
+    const { diagnostics: reconDiags } = reconcileWorkspaceProvenance(allDependencies);
+    for (const d of reconDiags) {
+      allDiagnostics.push(d);
     }
 
     // Compute statistics
@@ -266,6 +298,10 @@ export class EcosystemRegistry {
 
     let directCount = 0;
     let transitiveCount = 0;
+    let withResolvedVersionCount = 0;
+    let declaredOnlyCount = 0;
+    let withInstalledVersionCount = 0;
+    let conflictsCount = 0;
 
     for (const dep of allDependencies) {
       ecosystemsSet.add(dep.ecosystem);
@@ -273,6 +309,20 @@ export class EcosystemRegistry {
       ecosystemCounts[dep.ecosystem] = (ecosystemCounts[dep.ecosystem] || 0) + 1;
       if (dep.isDirect) directCount++;
       if (dep.isTransitive) transitiveCount++;
+
+      if (dep.versionResolved) {
+        withResolvedVersionCount++;
+      } else if (dep.isDirect) {
+        declaredOnlyCount++;
+      }
+
+      if (dep.versionInstalled) {
+        withInstalledVersionCount++;
+      }
+
+      if (dep.provenance?.hasConflict) {
+        conflictsCount++;
+      }
     }
 
     for (const df of discoveredFiles) {
@@ -298,6 +348,10 @@ export class EcosystemRegistry {
         directCount,
         transitiveCount,
         ecosystemCounts,
+        withResolvedVersionCount,
+        declaredOnlyCount,
+        withInstalledVersionCount,
+        conflictsCount,
       },
       capabilityMatrix: ECOSYSTEM_CAPABILITY_MATRIX,
     };
@@ -311,4 +365,14 @@ export class EcosystemRegistry {
   ): Promise<DependencyScanResult> {
     return this.scanRepositorySync(files);
   }
+
+  /**
+   * Alias for scanRepository.
+   */
+  public async scanCodebase(
+    files: Record<string, { path?: string; content: string }>
+  ): Promise<DependencyScanResult> {
+    return this.scanRepository(files);
+  }
 }
+
