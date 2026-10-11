@@ -16,6 +16,7 @@ import {
 import { GitHubRepo, GitHubBranch } from '@/lib/github/types';
 import { browserGitHubClient } from '@/lib/github/browser-github-client';
 import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
+import { useModalAccessibility } from '@/lib/hooks/use-modal-accessibility';
 
 interface GitHubModalProps {
   isOpen: boolean;
@@ -57,8 +58,13 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [lastAttemptedRepo, setLastAttemptedRepo] = useState<{ owner: string; repo: string; branch: string } | null>(null);
 
-  const mouseDownOnOverlayRef = useRef(false);
   const activePollRef = useRef<NodeJS.Timeout | null>(null);
+
+  const { containerRef, handleOverlayMouseDown, handleOverlayClick } = useModalAccessibility({
+    isOpen,
+    onClose,
+    isBusy: analyzing,
+  });
 
   const fetchBranches = useCallback(async (owner: string, repo: string, token?: string) => {
     setLoadingBranches(true);
@@ -100,6 +106,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
       if (pollId) clearInterval(pollId);
     };
   }, []);
+
 
   // Fetch repos on modal open
   useEffect(() => {
@@ -159,31 +166,44 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   return (
     <div
       className="modal-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) {
-          mouseDownOnOverlayRef.current = true;
-        }
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && mouseDownOnOverlayRef.current) {
-          onClose();
-        }
-        mouseDownOnOverlayRef.current = false;
-      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="github-modal-title"
+      onMouseDown={handleOverlayMouseDown}
+      onClick={handleOverlayClick}
     >
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 650 }}>
+      <div
+        ref={containerRef}
+        className="modal-content"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 650 }}
+      >
         {/* Header */}
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <FolderGit2 size={20} color="var(--primary-blue)" />
             <div>
-              <strong style={{ fontSize: 15, display: 'block' }}>Connect GitHub Repository</strong>
+              <strong id="github-modal-title" style={{ fontSize: 15, display: 'block' }}>
+                Connect GitHub Repository
+              </strong>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 Analyze source code, extract dependency graph, and link exact commit SHA
               </span>
             </div>
           </div>
-          <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
+          <button
+            onClick={onClose}
+            disabled={analyzing}
+            aria-label="Close GitHub modal"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: analyzing ? 'not-allowed' : 'pointer',
+              opacity: analyzing ? 0.4 : 1,
+            }}
+          >
+            <X size={18} color="var(--text-muted)" />
+          </button>
         </div>
 
         {/* Tab Navigation */}

@@ -2,13 +2,13 @@
 
 import React, { useState } from 'react';
 import { ProjectAnalysis, TraceEntity } from '@/lib/types/trace';
-import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   X,
   Sparkles,
-  Send,
-  RefreshCw,
-  CheckCircle,
+  Zap,
+  ShieldAlert,
+  Layers,
+  ChevronRight,
 } from 'lucide-react';
 
 interface InspectorPanelProps {
@@ -16,6 +16,10 @@ interface InspectorPanelProps {
   selectedEntityId: string | null;
   onSelectEntity: (entityId: string) => void;
   onClose: () => void;
+  onOpenAiInvestigator?: () => void;
+  onOpenExecutionPath?: () => void;
+  onOpenImpactView?: () => void;
+  isDrawer?: boolean;
 }
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
@@ -23,12 +27,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   selectedEntityId,
   onSelectEntity,
   onClose,
+  onOpenAiInvestigator,
+  onOpenExecutionPath,
+  onOpenImpactView,
+  isDrawer = false,
 }) => {
-  const [activeTab, setActiveTab] = useState<'source' | 'deps' | 'ai'>('source');
-  const [aiQuestion, setAiQuestion] = useState('');
-  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiGroundedFiles, setAiGroundedFiles] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'details' | 'relationships'>('details');
 
   const entity: TraceEntity | undefined = selectedEntityId
     ? analysis.entities[selectedEntityId]
@@ -38,140 +42,251 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const inbound = React.useMemo(() => {
     if (!selectedEntityId) return [];
     return analysis.relationships.filter(
-      (r) => r.targetId === selectedEntityId && (r.kind === 'calls' || r.kind === 'routes_to' || r.kind === 'imports')
+      (r) =>
+        r.targetId === selectedEntityId &&
+        (r.kind === 'calls' || r.kind === 'routes_to' || r.kind === 'imports')
     );
   }, [analysis, selectedEntityId]);
 
   const outbound = React.useMemo(() => {
     if (!selectedEntityId) return [];
     return analysis.relationships.filter(
-      (r) => r.sourceId === selectedEntityId && (r.kind === 'calls' || r.kind === 'routes_to' || r.kind === 'reads_from')
+      (r) =>
+        r.sourceId === selectedEntityId &&
+        (r.kind === 'calls' || r.kind === 'routes_to' || r.kind === 'reads_from')
     );
   }, [analysis, selectedEntityId]);
 
-  // Run local AI investigation
-  const handleAskAI = async (questionText: string) => {
-    if (!questionText.trim()) return;
-
-    setAiLoading(true);
-    setAiAnswer(null);
-
-    try {
-      const resp = await browserAnalysisService.investigateQuestion(
-        analysis.projectId,
-        questionText,
-        selectedEntityId || undefined
-      );
-
-      if (resp) {
-        setAiAnswer(resp.answer);
-        setAiGroundedFiles(resp.groundedFiles || []);
-      } else {
-        setAiAnswer('Unable to generate answer.');
-      }
-    } catch (err) {
-      setAiAnswer(err instanceof Error ? err.message : 'Error during local investigation.');
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
   if (!entity) {
     return (
-      <div className="right-panel">
+      <aside
+        className={`right-panel ${isDrawer ? 'as-drawer' : ''}`}
+        aria-label="Entity Inspector Panel"
+      >
         <div className="panel-header">
-          <span className="panel-title">Inspector</span>
-          <button onClick={onClose}><X size={16} /></button>
+          <span className="panel-title">
+            <Layers size={14} color="var(--primary-blue)" /> Entity Inspector
+          </span>
+          <button
+            onClick={onClose}
+            aria-label="Close inspector"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <X size={16} />
+          </button>
         </div>
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-          Click any function, route, or class in the graph or explorer to inspect its source code, dependencies, and execution path.
+        <div style={{ padding: 36, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+          Select any function, route, or class in the graph, file explorer, or trace view to inspect its identity, parameters, and relationships.
         </div>
-      </div>
+      </aside>
     );
   }
 
   return (
-    <div className="right-panel">
-      {/* Inspector Header */}
+    <aside
+      className={`right-panel ${isDrawer ? 'as-drawer' : ''}`}
+      aria-label={`Entity Inspector for ${entity.name}`}
+    >
+      {/* Header */}
       <div className="panel-header">
-        <div className="panel-title" style={{ maxWidth: 340, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div
+          className="panel-title"
+          style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
           <span className={`kind-badge ${entity.kind}`}>{entity.kind}</span>
           <strong title={entity.name}>{entity.name}</strong>
         </div>
-        <button onClick={onClose} style={{ color: 'var(--text-muted)' }}><X size={16} /></button>
+        <button
+          onClick={onClose}
+          aria-label="Close inspector"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <X size={16} />
+        </button>
       </div>
 
       {/* Tabs */}
       <div className="panel-tabs">
         <button
-          className={`panel-tab ${activeTab === 'source' ? 'active' : ''}`}
-          onClick={() => setActiveTab('source')}
+          className={`panel-tab ${activeTab === 'details' ? 'active' : ''}`}
+          onClick={() => setActiveTab('details')}
+          aria-label="Entity details tab"
         >
-          Source Code
+          Details & Scope
         </button>
         <button
-          className={`panel-tab ${activeTab === 'deps' ? 'active' : ''}`}
-          onClick={() => setActiveTab('deps')}
+          className={`panel-tab ${activeTab === 'relationships' ? 'active' : ''}`}
+          onClick={() => setActiveTab('relationships')}
+          aria-label="Relationships tab"
         >
-          Dependencies ({inbound.length + outbound.length})
-        </button>
-        <button
-          className={`panel-tab ${activeTab === 'ai' ? 'active' : ''}`}
-          onClick={() => setActiveTab('ai')}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-        >
-          <Sparkles size={13} color="var(--primary-blue)" /> AI Investigator
+          Connections ({inbound.length + outbound.length})
         </button>
       </div>
 
-      {/* Tab Contents */}
+      {/* Body */}
       <div className="panel-body">
-        {/* TAB 1: SOURCE CODE */}
-        {activeTab === 'source' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span>
-                <code>{entity.filePath}</code> : Lines {entity.location.startLine}-{entity.location.endLine}
-              </span>
-              {entity.isExported && <span style={{ color: 'var(--primary-blue)' }}>Exported</span>}
+        {/* TAB 1: DETAILS */}
+        {activeTab === 'details' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* File Location */}
+            <div
+              style={{
+                padding: '8px 10px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-color)',
+                fontSize: 12,
+              }}
+            >
+              <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 2 }}>
+                LOCATION:
+              </div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-primary)',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {entity.filePath}:{entity.location.startLine}–{entity.location.endLine}
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                {entity.isExported && (
+                  <span
+                    className="kind-badge"
+                    style={{ background: 'var(--success-bg)', color: 'var(--success-teal)' }}
+                  >
+                    Exported
+                  </span>
+                )}
+                {entity.isAsync && (
+                  <span
+                    className="kind-badge"
+                    style={{ background: 'var(--blue-selection-bg)', color: 'var(--primary-blue)' }}
+                  >
+                    Async
+                  </span>
+                )}
+              </div>
             </div>
 
+            {/* JSDoc / Docstring */}
             {entity.docstring && (
-              <div style={{ padding: 10, background: 'var(--blue-selection-bg)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--primary-blue)', fontSize: 12, color: 'var(--text-secondary)' }}>
-                <strong>JSDoc:</strong> {entity.docstring}
+              <div
+                style={{
+                  padding: 10,
+                  background: 'var(--blue-selection-bg)',
+                  borderRadius: 'var(--radius-sm)',
+                  borderLeft: '3px solid var(--primary-blue)',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: 2 }}>
+                  Documentation:
+                </strong>
+                {entity.docstring}
               </div>
             )}
 
+            {/* Parameters */}
             {entity.parameters && entity.parameters.length > 0 && (
-              <div style={{ background: 'var(--bg-tertiary)', padding: 10, borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
-                <span style={{ color: 'var(--text-muted)' }}>Parameters: </span>
-                {entity.parameters.map((p, idx) => (
-                  <span key={p.name} style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary-blue)' }}>
-                    {p.name}{p.type ? `: ${p.type}` : ''}{idx < entity.parameters!.length - 1 ? ', ' : ''}
-                  </span>
-                ))}
+              <div
+                style={{
+                  background: 'var(--bg-card)',
+                  padding: 10,
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-color)',
+                  fontSize: 12,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    color: 'var(--text-muted)',
+                    marginBottom: 6,
+                  }}
+                >
+                  Parameters ({entity.parameters.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {entity.parameters.map((p) => (
+                    <div key={p.name} style={{ fontFamily: 'var(--font-mono)' }}>
+                      <span style={{ color: 'var(--warning-amber)' }}>{p.name}</span>
+                      {p.type && (
+                        <span style={{ color: 'var(--primary-blue)' }}>: {p.type}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            {/* Source Excerpt */}
-            <div className="code-viewer-container">
-              <div className="code-viewer-header">
-                <span>AST Source Snippet</span>
-                <span style={{ fontSize: 11 }}>{entity.location.endLine - entity.location.startLine + 1} lines</span>
+            {/* Quick Context Actions */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Investigate Entity:
               </div>
-              <pre className="code-pre">
-                <code>{entity.snippet || '// No source snippet available'}</code>
-              </pre>
+
+              {onOpenAiInvestigator && (
+                <button
+                  onClick={onOpenAiInvestigator}
+                  className="tool-btn"
+                  style={{ justifyContent: 'space-between', padding: '8px 10px', fontSize: 12 }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Sparkles size={14} color="var(--primary-blue)" /> Ask AI Investigator
+                  </span>
+                  <ChevronRight size={14} color="var(--text-muted)" />
+                </button>
+              )}
+
+              {onOpenExecutionPath && (
+                <button
+                  onClick={onOpenExecutionPath}
+                  className="tool-btn"
+                  style={{ justifyContent: 'space-between', padding: '8px 10px', fontSize: 12 }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Zap size={14} color="var(--success-teal)" /> Inferred Execution Path
+                  </span>
+                  <ChevronRight size={14} color="var(--text-muted)" />
+                </button>
+              )}
+
+              {onOpenImpactView && (
+                <button
+                  onClick={onOpenImpactView}
+                  className="tool-btn"
+                  style={{ justifyContent: 'space-between', padding: '8px 10px', fontSize: 12 }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <ShieldAlert size={14} color="var(--error-red)" /> Calculate Blast Radius
+                  </span>
+                  <ChevronRight size={14} color="var(--text-muted)" />
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {/* TAB 2: DEPENDENCIES */}
-        {activeTab === 'deps' && (
+        {/* TAB 2: RELATIONSHIPS */}
+        {activeTab === 'relationships' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Inbound Callers */}
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  marginBottom: 8,
+                }}
+              >
                 Inbound Callers & References ({inbound.length})
               </div>
               {inbound.length === 0 ? (
@@ -197,11 +312,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                           cursor: 'pointer',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                           <span className={`kind-badge ${caller.kind}`}>{caller.kind}</span>
-                          <strong>{caller.name}</strong>
+                          <strong title={caller.name}>{caller.name}</strong>
                         </div>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Line {rel.location?.startLine || caller.location.startLine}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          L{rel.location?.startLine || caller.location.startLine}
+                        </span>
                       </div>
                     );
                   })}
@@ -211,12 +328,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
             {/* Outbound Callees */}
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>
-                Outbound Calls & Dependencies ({outbound.length})
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  marginBottom: 8,
+                }}
+              >
+                Outbound Calls ({outbound.length})
               </div>
               {outbound.length === 0 ? (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>
-                  No outbound calls made by this entity.
+                  No outbound calls invoked.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -236,11 +361,15 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                           cursor: callee ? 'pointer' : 'default',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                           <span className="kind-badge function">{rel.kind}</span>
-                          <strong>{callee ? callee.name : rel.targetId.split(':').pop()}</strong>
+                          <strong title={callee ? callee.name : rel.targetId}>
+                            {callee ? callee.name : rel.targetId.split(':').pop()}
+                          </strong>
                         </div>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Line {rel.location?.startLine || 1}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          L{rel.location?.startLine || 1}
+                        </span>
                       </div>
                     );
                   })}
@@ -249,110 +378,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </div>
           </div>
         )}
-
-        {/* TAB 3: AI INVESTIGATOR */}
-        {activeTab === 'ai' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Quick Action Prompts */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                Ask Grounded Question:
-              </span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                <button
-                  onClick={() => handleAskAI(`Explain how this function works`)}
-                  className="tool-btn"
-                  style={{ fontSize: 11 }}
-                >
-                  📖 Explain logic
-                </button>
-                <button
-                  onClick={() => handleAskAI(`What breaks if I change this function?`)}
-                  className="tool-btn"
-                  style={{ fontSize: 11 }}
-                >
-                  💥 Impact analysis
-                </button>
-                <button
-                  onClick={() => handleAskAI(`Trace the execution path starting here`)}
-                  className="tool-btn"
-                  style={{ fontSize: 11 }}
-                >
-                  ⚡ Trace execution
-                </button>
-                <button
-                  onClick={() => handleAskAI(`Trace data flow and parameters`)}
-                  className="tool-btn"
-                  style={{ fontSize: 11 }}
-                >
-                  🌊 Trace data flow
-                </button>
-              </div>
-            </div>
-
-            {/* Custom Question Input */}
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input
-                type="text"
-                placeholder="Ask about this code..."
-                value={aiQuestion}
-                onChange={(e) => setAiQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAskAI(aiQuestion)}
-                style={{
-                  flex: 1,
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-color)',
-                  color: 'var(--text-primary)',
-                  padding: '7px 10px',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 12,
-                }}
-              />
-              <button
-                onClick={() => handleAskAI(aiQuestion)}
-                disabled={aiLoading}
-                className="btn-upload"
-                style={{ padding: '7px 12px' }}
-              >
-                {aiLoading ? <RefreshCw size={14} className="animate-spin" /> : <Send size={14} />}
-              </button>
-            </div>
-
-            {/* AI Answer Box */}
-            {aiAnswer && (
-              <div
-                style={{
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: 14,
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                  color: 'var(--text-primary)',
-                  boxShadow: 'var(--shadow-sm)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid var(--border-color)' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success-teal)', fontWeight: 600, fontSize: 11 }}>
-                    <CheckCircle size={13} /> Grounded in Source Code
-                  </span>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Deterministic Offline Engine</span>
-                </div>
-
-                <div style={{ whiteSpace: 'pre-wrap' }}>
-                  {aiAnswer}
-                </div>
-
-                {aiGroundedFiles.length > 0 && (
-                  <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid var(--border-color)', fontSize: 11, color: 'var(--text-muted)' }}>
-                    <strong>Citations:</strong> {aiGroundedFiles.join(', ')}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
-    </div>
+    </aside>
   );
 };

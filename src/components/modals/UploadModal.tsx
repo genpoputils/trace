@@ -10,6 +10,7 @@ import {
   FolderCode,
 } from 'lucide-react';
 import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
+import { useModalAccessibility } from '@/lib/hooks/use-modal-accessibility';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -27,6 +28,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [progressStatus, setProgressStatus] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { containerRef, handleOverlayMouseDown, handleOverlayClick } = useModalAccessibility({
+    isOpen,
+    onClose,
+    isBusy: loading,
+  });
 
   if (!isOpen) return null;
 
@@ -69,14 +76,39 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="modal-overlay"
+      onMouseDown={handleOverlayMouseDown}
+      onClick={handleOverlayClick}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="upload-modal-title"
+    >
+      <div
+        ref={containerRef}
+        className="modal-content"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <FileArchive size={18} color="var(--primary-blue)" />
-            <strong style={{ fontSize: 15 }}>Import Repository Archive</strong>
+            <strong id="upload-modal-title" style={{ fontSize: 15 }}>
+              Import Repository Archive
+            </strong>
           </div>
-          <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
+          <button
+            onClick={onClose}
+            disabled={loading}
+            aria-label="Close upload modal"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.4 : 1,
+            }}
+          >
+            <X size={18} color="var(--text-muted)" />
+          </button>
         </div>
 
         <div className="modal-body">
@@ -90,6 +122,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             ref={fileInputRef}
             accept=".zip"
             style={{ display: 'none' }}
+            aria-label="Select ZIP file"
             onChange={(e) => {
               if (e.target.files && e.target.files.length > 0) {
                 handleUploadFile(e.target.files[0]);
@@ -104,6 +137,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
+            tabIndex={0}
+            role="button"
+            aria-label="Upload zip file dropzone"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
           >
             {loading ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
@@ -139,42 +181,50 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 alignItems: 'center',
                 gap: 8,
               }}
+              role="alert"
             >
               <AlertTriangle size={16} />
               {error}
             </div>
           )}
 
-          {/* Quick-load sample option */}
+          {/* Privacy Note */}
           <div
             style={{
-              marginTop: 10,
               padding: 12,
               background: 'var(--bg-tertiary)',
               borderRadius: 'var(--radius-sm)',
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-color)',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
+              gap: 8,
+              alignItems: 'flex-start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FolderCode size={16} color="var(--emerald-primary)" />
-              <div style={{ fontSize: 12 }}>
-                <strong>Sample E-Commerce API</strong>
-                <div style={{ color: 'var(--text-muted)' }}>Express + Prisma + Stripe + Auth</div>
-              </div>
+            <FolderCode size={16} color="var(--primary-blue)" style={{ flexShrink: 0, marginTop: 2 }} />
+            <div>
+              <strong>100% Client-Side Privacy:</strong> Your archive is decompressed and parsed entirely inside your browser using in-memory Web Workers. No source code or secrets are ever uploaded to any server.
             </div>
-            <button
-              onClick={() => {
-                onProjectLoaded('sample-ecommerce-api');
-                onClose();
-              }}
-              className="tool-btn active"
-              style={{ fontSize: 11 }}
-            >
-              Load Sample
-            </button>
           </div>
+        </div>
+
+        <div className="modal-footer">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="tool-btn"
+            style={{ opacity: loading ? 0.5 : 1 }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            className="btn-upload"
+          >
+            {loading ? 'Analyzing...' : 'Browse Computer'}
+          </button>
         </div>
       </div>
     </div>
