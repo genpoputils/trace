@@ -149,7 +149,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
       <div
         style={{
           padding: '10px 16px',
-          background: 'rgba(6, 182, 212, 0.05)',
+          background: 'var(--blue-selection-bg)',
           borderBottom: '1px solid var(--border-color)',
           display: 'flex',
           alignItems: 'center',
@@ -160,7 +160,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <span>
-            🔬 Mode: <strong style={{ color: 'var(--cyan-primary)' }}>Statically Inferred Execution Path</strong>
+            🔬 Mode: <strong style={{ color: 'var(--primary-blue)' }}>Statically Inferred Execution Path</strong>
           </span>
           {traceData && (
             <>
@@ -171,7 +171,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
                 Max Depth: <strong>{traceData.maxDepth}</strong>
               </span>
               {traceData.unresolvedCount > 0 && (
-                <span style={{ color: 'var(--amber-primary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ color: 'var(--warning-amber)', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <AlertTriangle size={13} /> {traceData.unresolvedCount} Unresolved / Dynamic Call(s)
                 </span>
               )}
@@ -179,7 +179,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
           )}
         </div>
         {loading && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--cyan-primary)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--primary-blue)' }}>
             <RefreshCw size={13} className="animate-spin" /> Tracing call tree...
           </span>
         )}
@@ -203,13 +203,13 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
                   onClick={() => onSelectEntity(step.entityId)}
                   style={{
                     marginLeft: `${step.depth * 28}px`,
-                    background: isSelected ? 'rgba(6, 182, 212, 0.12)' : 'var(--bg-card)',
-                    border: `1px solid ${isSelected ? 'var(--cyan-primary)' : 'var(--border-color)'}`,
+                    background: isSelected ? 'var(--blue-selection-bg)' : 'var(--bg-card)',
+                    border: `1px solid ${isSelected ? 'var(--primary-blue)' : 'var(--border-color)'}`,
                     borderRadius: 'var(--radius-md)',
                     padding: 12,
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                    boxShadow: 'var(--shadow-sm)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -226,7 +226,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          color: 'var(--cyan-primary)',
+                          color: 'var(--primary-blue)',
                         }}
                       >
                         {step.order}
@@ -239,8 +239,8 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
                         <span
                           style={{
                             fontSize: 11,
-                            background: 'rgba(245, 158, 11, 0.15)',
-                            color: 'var(--amber-primary)',
+                            background: 'var(--warning-bg)',
+                            color: 'var(--warning-amber)',
                             padding: '1px 6px',
                             borderRadius: 4,
                             display: 'flex',
@@ -252,7 +252,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
                         </span>
                       )}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: isResolved ? 'var(--emerald-primary)' : 'var(--amber-primary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: isResolved ? 'var(--success-teal)' : 'var(--warning-amber)' }}>
                       {isResolved ? (
                         <>
                           <CheckCircle2 size={13} /> Statically Resolved
@@ -275,12 +275,13 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
                       style={{
                         marginTop: 8,
                         padding: '6px 10px',
-                        background: '#0d1117',
+                        background: 'var(--bg-tertiary)',
                         borderRadius: 'var(--radius-sm)',
                         fontFamily: 'var(--font-mono)',
                         fontSize: 12,
-                        color: '#7ee787',
-                        borderLeft: '3px solid var(--cyan-primary)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderLeft: '3px solid var(--primary-blue)',
                       }}
                     >
                       {step.callEvidence}

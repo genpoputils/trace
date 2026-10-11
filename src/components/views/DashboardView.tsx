@@ -39,17 +39,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Project Header Banner */}
         <div
           style={{
-            background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.15), rgba(6, 182, 212, 0.05))',
-            border: '1px solid rgba(6, 182, 212, 0.3)',
+            background: 'var(--panel-bg)',
+            border: '1px solid var(--border-color)',
+            borderTop: '3px solid var(--primary-blue)',
             borderRadius: 'var(--radius-lg)',
             padding: 24,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            boxShadow: 'var(--shadow-sm)',
           }}
         >
           <div>
-            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--cyan-primary)' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary-blue)' }}>
               Project Intelligence Overview
             </span>
             <h1 style={{ fontSize: 24, fontWeight: 700, marginTop: 4, color: 'var(--text-primary)' }}>
@@ -73,7 +75,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: 12 }}>Files Analyzed</span>
-              <FileText size={16} color="var(--cyan-primary)" />
+              <FileText size={16} color="var(--primary-blue)" />
             </div>
             <div style={{ fontSize: 26, fontWeight: 700, marginTop: 8 }}>{analysis.stats.totalFiles}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
@@ -84,7 +86,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: 12 }}>Symbols Identified</span>
-              <Code size={16} color="var(--emerald-primary)" />
+              <Code size={16} color="var(--success-teal)" />
             </div>
             <div style={{ fontSize: 26, fontWeight: 700, marginTop: 8 }}>{analysis.stats.totalSymbols}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Functions, classes & interfaces</div>
@@ -93,7 +95,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: 12 }}>Relationships</span>
-              <Network size={16} color="var(--purple-primary)" />
+              <Network size={16} color="var(--primary-blue)" />
             </div>
             <div style={{ fontSize: 26, fontWeight: 700, marginTop: 8 }}>{analysis.stats.totalRelationships}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Cross-module calls & imports</div>
@@ -102,7 +104,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: 12 }}>API Endpoints</span>
-              <Route size={16} color="var(--cyan-primary)" />
+              <Route size={16} color="var(--primary-blue)" />
             </div>
             <div style={{ fontSize: 26, fontWeight: 700, marginTop: 8 }}>{analysis.stats.routesCount}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Express & Next.js routes</div>
@@ -111,7 +113,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: 12 }}>Database Queries</span>
-              <Database size={16} color="var(--blue-primary)" />
+              <Database size={16} color="var(--primary-blue)" />
             </div>
             <div style={{ fontSize: 26, fontWeight: 700, marginTop: 8 }}>{analysis.stats.dbQueriesCount}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Prisma & SQL query points</div>
@@ -120,7 +122,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
               <span style={{ fontSize: 12 }}>Unresolved Calls</span>
-              <AlertTriangle size={16} color="var(--amber-primary)" />
+              <AlertTriangle size={16} color="var(--warning-amber)" />
             </div>
             <div style={{ fontSize: 26, fontWeight: 700, marginTop: 8 }}>{analysis.stats.unresolvedCalls}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Dynamic dispatches or external</div>
@@ -132,7 +134,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Central Hubs Leaderboard */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 14 }}>
-              <Award size={18} color="var(--amber-primary)" /> Most Connected Core Hubs
+              <Award size={18} color="var(--primary-blue)" /> Most Connected Core Hubs
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {analysis.stats.mostConnected.slice(0, 7).map((hub, idx) => (
@@ -166,7 +168,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Discovered API Routes */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 14 }}>
-              <Route size={18} color="var(--cyan-primary)" /> Discovered API Routes
+              <Route size={18} color="var(--primary-blue)" /> Discovered API Routes
             </div>
             {routes.length === 0 ? (
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No HTTP route declarations found.</div>
@@ -202,7 +204,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {dbQueries.length > 0 && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 14 }}>
-              <Database size={18} color="var(--blue-primary)" /> Identified Database Operations
+              <Database size={18} color="var(--primary-blue)" /> Identified Database Operations
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
               {dbQueries.map((dbq) => (

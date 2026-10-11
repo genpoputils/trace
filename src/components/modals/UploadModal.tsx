@@ -79,7 +79,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <FileArchive size={18} color="var(--cyan-primary)" />
+            <FileArchive size={18} color="var(--primary-blue)" />
             <strong style={{ fontSize: 15 }}>Import Repository Archive</strong>
           </div>
           <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
@@ -113,14 +113,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           >
             {loading ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                <RefreshCw size={36} className="animate-spin" color="var(--cyan-primary)" />
-                <span style={{ fontSize: 13, color: 'var(--cyan-primary)', fontWeight: 600 }}>
+                <RefreshCw size={36} className="animate-spin" color="var(--primary-blue)" />
+                <span style={{ fontSize: 13, color: 'var(--primary-blue)', fontWeight: 600 }}>
                   {progressStatus}
                 </span>
               </div>
             ) : (
               <>
-                <UploadCloud size={40} color="var(--cyan-primary)" />
+                <UploadCloud size={40} color="var(--primary-blue)" />
                 <div>
                   <strong style={{ fontSize: 14 }}>Click to choose ZIP or drag and drop</strong>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
@@ -136,11 +136,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             <div
               style={{
                 padding: 12,
-                background: 'rgba(244, 63, 94, 0.1)',
-                border: '1px solid var(--rose-primary)',
+                background: 'var(--error-bg)',
+                border: '1px solid var(--error-red)',
                 borderRadius: 'var(--radius-sm)',
                 fontSize: 12,
-                color: 'var(--rose-primary)',
+                color: 'var(--error-red)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,

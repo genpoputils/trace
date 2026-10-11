@@ -133,7 +133,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           onClick={() => setActiveTab('ai')}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
         >
-          <Sparkles size={13} color="var(--cyan-primary)" /> AI Investigator
+          <Sparkles size={13} color="var(--primary-blue)" /> AI Investigator
         </button>
       </div>
 
@@ -146,11 +146,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <span>
                 <code>{entity.filePath}</code> : Lines {entity.location.startLine}-{entity.location.endLine}
               </span>
-              {entity.isExported && <span style={{ color: 'var(--cyan-primary)' }}>Exported</span>}
+              {entity.isExported && <span style={{ color: 'var(--primary-blue)' }}>Exported</span>}
             </div>
 
             {entity.docstring && (
-              <div style={{ padding: 10, background: 'rgba(6, 182, 212, 0.08)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--cyan-primary)', fontSize: 12, color: 'var(--text-secondary)' }}>
+              <div style={{ padding: 10, background: 'var(--blue-selection-bg)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--primary-blue)', fontSize: 12, color: 'var(--text-secondary)' }}>
                 <strong>JSDoc:</strong> {entity.docstring}
               </div>
             )}
@@ -159,7 +159,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <div style={{ background: 'var(--bg-tertiary)', padding: 10, borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
                 <span style={{ color: 'var(--text-muted)' }}>Parameters: </span>
                 {entity.parameters.map((p, idx) => (
-                  <span key={p.name} style={{ fontFamily: 'var(--font-mono)', color: 'var(--amber-primary)' }}>
+                  <span key={p.name} style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary-blue)' }}>
                     {p.name}{p.type ? `: ${p.type}` : ''}{idx < entity.parameters!.length - 1 ? ', ' : ''}
                   </span>
                 ))}
@@ -335,18 +335,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             {aiAnswer && (
               <div
                 style={{
-                  background: '#0d1117',
+                  background: 'var(--bg-tertiary)',
                   border: '1px solid var(--border-color)',
                   borderRadius: 'var(--radius-md)',
                   padding: 14,
                   fontSize: 12,
                   lineHeight: 1.6,
-                  color: '#e6edf3',
-                  boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+                  color: 'var(--text-primary)',
+                  boxShadow: 'var(--shadow-sm)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid #21262d' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--emerald-primary)', fontWeight: 600, fontSize: 11 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid var(--border-color)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success-teal)', fontWeight: 600, fontSize: 11 }}>
                     <CheckCircle size={13} /> Grounded in Source Code
                   </span>
                   <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Deterministic Offline Engine</span>
@@ -357,7 +357,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
 
                 {aiGroundedFiles.length > 0 && (
-                  <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid #21262d', fontSize: 11, color: 'var(--text-muted)' }}>
+                  <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid var(--border-color)', fontSize: 11, color: 'var(--text-muted)' }}>
                     <strong>Citations:</strong> {aiGroundedFiles.join(', ')}
                   </div>
                 )}

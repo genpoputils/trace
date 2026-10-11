@@ -162,7 +162,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
         {/* Header */}
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <FolderGit2 size={20} color="var(--cyan-primary)" />
+            <FolderGit2 size={20} color="var(--primary-blue)" />
             <div>
               <strong style={{ fontSize: 15, display: 'block' }}>Connect GitHub Repository</strong>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -214,11 +214,11 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {authStatus?.oauthConfigured ? (
-                    <span style={{ color: 'var(--emerald-primary)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                    <span style={{ color: 'var(--success-teal)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600 }}>
                       <CheckCircle2 size={14} /> OAuth Integration Configured
                     </span>
                   ) : (
-                    <span style={{ color: 'var(--amber-primary)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                    <span style={{ color: 'var(--warning-amber)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
                       <Key size={14} /> OAuth not yet configured in .env (Use PAT or Public)
                     </span>
                   )}
@@ -279,7 +279,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>Select Repository:</span>
-                  {loadingRepos && <span style={{ color: 'var(--cyan-primary)', fontSize: 11 }}><RefreshCw size={11} className="animate-spin" /> Loading repos...</span>}
+                  {loadingRepos && <span style={{ color: 'var(--primary-blue)', fontSize: 11 }}><RefreshCw size={11} className="animate-spin" /> Loading repos...</span>}
                 </label>
                 <select
                   value={selectedRepoFullName}
@@ -306,7 +306,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>Branch:</span>
-                  {loadingBranches && <span style={{ color: 'var(--cyan-primary)', fontSize: 11 }}><RefreshCw size={11} className="animate-spin" /> Fetching branches...</span>}
+                  {loadingBranches && <span style={{ color: 'var(--primary-blue)', fontSize: 11 }}><RefreshCw size={11} className="animate-spin" /> Fetching branches...</span>}
                 </label>
                 <select
                   value={selectedBranch}
@@ -469,11 +469,12 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                   style={{
                     marginTop: 10,
                     padding: 10,
-                    background: '#0d1117',
+                    background: 'var(--bg-tertiary)',
                     borderRadius: 4,
-                    color: '#7ee787',
+                    color: 'var(--text-primary)',
                     fontSize: 12,
                     fontFamily: 'var(--font-mono)',
+                    border: '1px solid var(--border-color)',
                   }}
                 >
 {`GITHUB_CLIENT_ID=your_client_id_here
@@ -481,7 +482,7 @@ GITHUB_CLIENT_SECRET=your_client_secret_here`}
                 </pre>
               </div>
 
-              <div style={{ padding: 12, background: 'rgba(6, 182, 212, 0.08)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--cyan-primary)' }}>
+              <div style={{ padding: 12, background: 'var(--blue-selection-bg)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--primary-blue)' }}>
                 <strong>No OAuth setup needed for local inspection:</strong> You can also paste a GitHub Personal Access Token (PAT) with <code>repo</code> scope directly into the field above to analyze private repositories without configuring an OAuth application.
               </div>
             </div>
@@ -492,11 +493,11 @@ GITHUB_CLIENT_SECRET=your_client_secret_here`}
             <div
               style={{
                 padding: 10,
-                background: 'rgba(244, 63, 94, 0.1)',
-                border: '1px solid var(--rose-primary)',
+                background: 'var(--error-bg)',
+                border: '1px solid var(--error-red)',
                 borderRadius: 'var(--radius-sm)',
                 fontSize: 12,
-                color: 'var(--rose-primary)',
+                color: 'var(--error-red)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,

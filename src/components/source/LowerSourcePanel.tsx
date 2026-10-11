@@ -68,7 +68,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
         flexDirection: 'column',
         transition: 'height 0.2s ease',
         zIndex: 30,
-        boxShadow: '0 -4px 16px rgba(0,0,0,0.2)',
+        boxShadow: 'var(--shadow-sm)',
       }}
     >
       {/* Panel Top Navigation & Tab Bar */}
@@ -105,7 +105,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
               style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4 }}
               onClick={() => { setActiveTab('ai'); setIsCollapsed(false); }}
             >
-              <Sparkles size={13} color="var(--cyan-primary)" style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> AI Explanation
+              <Sparkles size={13} color="var(--primary-blue)" style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> AI Explanation
             </button>
           </div>
 
@@ -116,7 +116,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
             <FileCode size={13} color="var(--text-muted)" />
             <strong style={{ color: 'var(--text-primary)' }}>{entity.filePath}</strong>
             <span>:</span>
-            <span style={{ color: 'var(--cyan-primary)', fontFamily: 'var(--font-mono)' }}>
+            <span style={{ color: 'var(--primary-blue)', fontFamily: 'var(--font-mono)' }}>
               L{entity.location.startLine}-{entity.location.endLine}
             </span>
             <span className={`kind-badge ${entity.kind}`} style={{ fontSize: 9, padding: '1px 5px' }}>
@@ -133,7 +133,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
             style={{ fontSize: 11, padding: '3px 8px' }}
             title="Copy file path and line location"
           >
-            {copied ? <Check size={12} color="var(--emerald-primary)" /> : <Copy size={12} />}
+            {copied ? <Check size={12} color="var(--success-teal)" /> : <Copy size={12} />}
             <span>{copied ? 'Copied' : 'Copy Ref'}</span>
           </button>
 
@@ -157,7 +157,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
               style={{
                 flex: 1,
                 overflowY: 'auto',
-                background: '#0d1117',
+                background: 'var(--code-bg)',
                 fontFamily: 'var(--font-mono)',
                 fontSize: 12,
                 lineHeight: 1.6,
@@ -175,8 +175,8 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                     id={`source-line-${lineNum}`}
                     style={{
                       display: 'flex',
-                      background: isTargetLine ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                      borderLeft: isTargetLine ? '3px solid var(--cyan-primary)' : '3px solid transparent',
+                      background: isTargetLine ? 'rgba(37, 99, 235, 0.2)' : 'transparent',
+                      borderLeft: isTargetLine ? '3px solid var(--primary-blue)' : '3px solid transparent',
                       padding: '0 12px 0 6px',
                     }}
                   >
@@ -185,14 +185,14 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                         width: 44,
                         textAlign: 'right',
                         paddingRight: 14,
-                        color: isTargetLine ? 'var(--cyan-primary)' : '#484f58',
+                        color: isTargetLine ? 'var(--primary-blue)' : 'var(--code-line-num)',
                         userSelect: 'none',
                         flexShrink: 0,
                       }}
                     >
                       {lineNum}
                     </span>
-                    <span style={{ color: isTargetLine ? '#f0f6fc' : '#c9d1d9', whiteSpace: 'pre' }}>
+                    <span style={{ color: isTargetLine ? '#FFFFFF' : 'var(--code-text)', whiteSpace: 'pre' }}>
                       {lineContent}
                     </span>
                   </div>
@@ -208,7 +208,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className={`kind-badge ${entity.kind}`}>{entity.kind}</span>
                   <strong style={{ fontSize: 16 }}>{entity.name}</strong>
-                  {entity.isAsync && <span className="kind-badge" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#a78bfa' }}>Async</span>}
+                  {entity.isAsync && <span className="kind-badge" style={{ background: 'var(--blue-selection-bg)', color: 'var(--primary-blue)' }}>Async</span>}
                 </div>
 
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -221,7 +221,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {entity.parameters.map((p) => (
                         <div key={p.name} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                          <span style={{ color: 'var(--amber-primary)' }}>{p.name}</span>: <span style={{ color: 'var(--cyan-primary)' }}>{p.type || 'any'}</span>
+                          <span style={{ color: 'var(--warning-amber)' }}>{p.name}</span>: <span style={{ color: 'var(--primary-blue)' }}>{p.type || 'any'}</span>
                         </div>
                       ))}
                     </div>
@@ -236,7 +236,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
             <div style={{ flex: 1, overflowY: 'auto', padding: 16, background: 'var(--bg-primary)' }}>
               <div style={{ maxWidth: 840, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--emerald-primary)' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--success-teal)' }}>
                     ✓ Grounded Source Analysis for <code>{entity.name}</code>
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -244,12 +244,12 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                   </span>
                 </div>
 
-                <div style={{ background: '#0d1117', padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: 13, lineHeight: 1.6, color: '#e6edf3' }}>
+                <div style={{ background: 'var(--bg-tertiary)', padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
                   <p>
                     <strong>Component Role:</strong> <code>{entity.name}</code> is a {entity.isExported ? 'publicly exported ' : ''}<strong>{entity.kind}</strong> in <code>{entity.filePath}</code>.
                   </p>
                   {entity.docstring && (
-                    <blockquote style={{ borderLeft: '3px solid var(--cyan-primary)', paddingLeft: 10, margin: '8px 0', color: 'var(--text-secondary)' }}>
+                    <blockquote style={{ borderLeft: '3px solid var(--primary-blue)', paddingLeft: 10, margin: '8px 0', color: 'var(--text-secondary)' }}>
                       {entity.docstring}
                     </blockquote>
                   )}

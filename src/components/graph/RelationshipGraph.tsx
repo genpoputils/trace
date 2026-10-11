@@ -46,22 +46,22 @@ function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) 
   const getIcon = () => {
     switch (entity.kind) {
       case 'route':
-        return <Route size={14} color="var(--electric-blue)" />;
+        return <Route size={14} color="var(--primary-blue)" />;
       case 'component':
-        return <LayoutGrid size={14} color="#2563eb" />;
+        return <LayoutGrid size={14} color="var(--primary-blue)" />;
       case 'hook':
-        return <Anchor size={14} color="#d97706" />;
+        return <Anchor size={14} color="var(--warning-amber)" />;
       case 'function':
       case 'method':
-        return <Zap size={14} color="var(--emerald-primary)" />;
+        return <Zap size={14} color="var(--success-teal)" />;
       case 'class':
-        return <Layers size={14} color="var(--purple-primary)" />;
+        return <Layers size={14} color="var(--text-secondary)" />;
       case 'db_query':
-        return <Database size={14} color="var(--blue-primary)" />;
+        return <Database size={14} color="var(--primary-blue)" />;
       case 'variable':
-        return <Variable size={14} color="var(--amber-primary)" />;
+        return <Variable size={14} color="var(--warning-amber)" />;
       case 'external_api':
-        return <ExternalLink size={14} color="var(--rose-primary)" />;
+        return <ExternalLink size={14} color="var(--error-red)" />;
       default:
         return <FileCode size={14} color="var(--text-muted)" />;
     }
@@ -69,7 +69,7 @@ function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) 
 
   return (
     <div className={`trace-node ${selected ? 'selected' : ''}`}>
-      <Handle type="target" position={Position.Left} style={{ background: 'var(--electric-blue)', border: '2px solid #fff' }} />
+      <Handle type="target" position={Position.Left} style={{ background: 'var(--primary-blue)', border: '2px solid #FFFFFF' }} />
       <div className="trace-node-header">
         <span className={`kind-badge ${entity.kind}`}>{entity.kind}</span>
         {getIcon()}
@@ -82,9 +82,9 @@ function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) 
       </div>
       <div className="trace-node-footer">
         <span>Line {entity.location.startLine}</span>
-        {entity.isExported && <span style={{ color: 'var(--electric-blue)', fontWeight: 600 }}>Exported</span>}
+        {entity.isExported && <span style={{ color: 'var(--primary-blue)', fontWeight: 600 }}>Exported</span>}
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: 'var(--emerald-primary)', border: '2px solid #fff' }} />
+      <Handle type="source" position={Position.Right} style={{ background: 'var(--primary-blue)', border: '2px solid #FFFFFF' }} />
     </div>
   );
 }
@@ -191,15 +191,15 @@ export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
           id: rel.id,
           source: rel.sourceId,
           target: rel.targetId,
-          animated: isRoute || isFocusPath,
+          animated: isFocusPath,
           label: rel.kind === 'routes_to' ? 'routes' : rel.kind === 'calls' ? 'calls' : rel.kind,
           style: {
-            stroke: isFocusPath ? '#0284c7' : isRoute ? '#0ea5e9' : isCalls ? '#10b981' : '#94a3b8',
-            strokeWidth: isFocusPath ? 2.5 : isRoute ? 2 : 1.5,
+            stroke: isFocusPath ? '#2563EB' : '#CBD5E1',
+            strokeWidth: isFocusPath ? 2.2 : 1.2,
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: isFocusPath ? '#0284c7' : isRoute ? '#0ea5e9' : isCalls ? '#10b981' : '#94a3b8',
+            color: isFocusPath ? '#2563EB' : '#94A3B8',
           },
         });
       }
@@ -238,20 +238,21 @@ export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
         minZoom={0.2}
         maxZoom={2}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#94a3b8" />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#CBD5E1" />
         <Controls />
         <MiniMap
           nodeColor={(n) => {
             const ent = n.data?.entity as TraceEntity | undefined;
-            if (ent?.kind === 'route') return '#0284c7';
-            if (ent?.kind === 'component') return '#2563eb';
-            if (ent?.kind === 'hook') return '#d97706';
-            if (ent?.kind === 'function') return '#059669';
-            if (ent?.kind === 'db_query') return '#3b82f6';
-            if (ent?.kind === 'class') return '#7c3aed';
-            return '#94a3b8';
+            if (ent?.kind === 'route') return '#2563EB';
+            if (ent?.kind === 'component') return '#2563EB';
+            if (ent?.kind === 'hook') return '#F59E0B';
+            if (ent?.kind === 'function' || ent?.kind === 'method') return '#0D9488';
+            if (ent?.kind === 'db_query') return '#2563EB';
+            if (ent?.kind === 'class') return '#475569';
+            if (ent?.kind === 'external_api') return '#DC2626';
+            return '#94A3B8';
           }}
-          maskColor="rgba(241, 245, 249, 0.7)"
+          maskColor="rgba(241, 245, 249, 0.75)"
         />
       </ReactFlow>
     </div>

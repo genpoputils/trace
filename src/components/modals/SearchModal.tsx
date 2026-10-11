@@ -79,7 +79,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         {/* Search Input Bar */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid var(--border-color)', gap: 10 }}>
-          <Search size={18} color="var(--cyan-primary)" />
+          <Search size={18} color="var(--primary-blue)" />
           <input
             ref={inputRef}
             type="text"

@@ -116,7 +116,7 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
           </select>
         </div>
         {loading && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--amber-primary)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--primary-blue)' }}>
             <RefreshCw size={13} className="animate-spin" /> Tracing value flow...
           </span>
         )}
@@ -133,13 +133,13 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
             {/* Origin Card */}
             <div
               style={{
-                background: 'rgba(245, 158, 11, 0.1)',
-                border: '1px solid rgba(245, 158, 11, 0.3)',
+                background: 'var(--blue-selection-bg)',
+                border: '1px solid var(--primary-blue)',
                 borderRadius: 'var(--radius-md)',
                 padding: 16,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--amber-primary)', fontWeight: 600, fontSize: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--primary-blue)', fontWeight: 600, fontSize: 14 }}>
                 <FileInput size={16} /> Origin Symbol: <code>{flowData.rootSymbol}</code>
               </div>
               <p style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -152,7 +152,7 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
               <React.Fragment key={step.id}>
                 {idx > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'center', margin: '-6px 0' }}>
-                    <ArrowDown size={18} color="var(--cyan-primary)" />
+                    <ArrowDown size={18} color="var(--primary-blue)" />
                   </div>
                 )}
                 <div
@@ -161,17 +161,17 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
                     border: '1px solid var(--border-color)',
                     borderRadius: 'var(--radius-md)',
                     padding: 14,
-                    boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                    boxShadow: 'var(--shadow-sm)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="kind-badge" style={{ background: 'rgba(6, 182, 212, 0.15)', color: 'var(--cyan-primary)' }}>
+                      <span className="kind-badge" style={{ background: 'var(--blue-selection-bg)', color: 'var(--primary-blue)' }}>
                         {step.flowType.toUpperCase()}
                       </span>
                       <strong style={{ fontSize: 13, color: 'var(--text-primary)' }}>{step.symbolName}</strong>
                     </div>
-                    <span style={{ fontSize: 11, color: step.confidence === 'statically_resolved' ? 'var(--emerald-primary)' : 'var(--amber-primary)' }}>
+                    <span style={{ fontSize: 11, color: step.confidence === 'statically_resolved' ? 'var(--success-teal)' : 'var(--warning-amber)' }}>
                       {step.confidence === 'statically_resolved' ? '✓ Statically Established' : '⚠️ Inferred Flow'}
                     </span>
                   </div>
@@ -183,12 +183,14 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
                   {step.evidenceSnippet && (
                     <div
                       style={{
-                        padding: '6px 10px',
-                        background: '#0d1117',
+                        padding: '8px 10px',
+                        background: 'var(--bg-tertiary)',
                         borderRadius: 'var(--radius-sm)',
                         fontFamily: 'var(--font-mono)',
                         fontSize: 12,
-                        color: '#7ee787',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderLeft: '3px solid var(--primary-blue)',
                       }}
                     >
                       {step.evidenceSnippet}
@@ -202,13 +204,13 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
             {flowData.sinkEntityIds.length > 0 && (
               <div
                 style={{
-                  background: 'rgba(16, 185, 129, 0.1)',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  background: 'var(--success-bg)',
+                  border: '1px solid var(--success-teal)',
                   borderRadius: 'var(--radius-md)',
                   padding: 16,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--emerald-primary)', fontWeight: 600, fontSize: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--success-teal)', fontWeight: 600, fontSize: 14 }}>
                   <Database size={16} /> Data Terminal Sinks ({flowData.sinkEntityIds.length})
                 </div>
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>

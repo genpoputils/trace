@@ -264,7 +264,7 @@ export default function TraceHomePage() {
                 setInspectorOpen(true);
               }}
             >
-              <Sparkles size={15} color="var(--cyan-primary)" /> AI Insights
+              <Sparkles size={15} color="var(--primary-blue)" /> AI Insights
             </button>
           </div>
 
@@ -299,14 +299,14 @@ export default function TraceHomePage() {
                         borderRadius: 'var(--radius-sm)',
                         fontSize: 12,
                         cursor: 'pointer',
-                        background: isFileActive ? 'rgba(2, 132, 199, 0.08)' : 'transparent',
-                        color: isFileActive ? 'var(--electric-blue)' : 'var(--text-secondary)',
+                        background: isFileActive ? 'var(--blue-selection-bg)' : 'transparent',
+                        color: isFileActive ? 'var(--primary-blue)' : 'var(--text-secondary)',
                         fontWeight: isFileActive ? 600 : 400,
                       }}
                       className="nav-tab-btn"
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-                        <FileCode size={13} color={isFileActive ? 'var(--electric-blue)' : 'var(--text-muted)'} />
+                        <FileCode size={13} color={isFileActive ? 'var(--primary-blue)' : 'var(--text-muted)'} />
                         <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                           {filePath}
                         </span>
@@ -371,7 +371,7 @@ export default function TraceHomePage() {
           {/* Active Canvas / View */}
           <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
             {loading ? (
-              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--electric-blue)', gap: 10 }}>
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary-blue)', gap: 10 }}>
                 <span>Compiling codebase graph and indexing symbols...</span>
               </div>
             ) : !analysis ? (

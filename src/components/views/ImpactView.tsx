@@ -85,13 +85,12 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
   const getSeverityColor = (sev: string) => {
     switch (sev) {
       case 'critical':
-        return '#f43f5e';
+        return '#DC2626';
       case 'high':
-        return '#fb923c';
       case 'medium':
-        return '#f59e0b';
+        return '#F59E0B';
       default:
-        return '#10b981';
+        return '#0D9488';
     }
   };
 
@@ -135,7 +134,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
           </select>
         </div>
         {loading && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--rose-primary)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--error-red)' }}>
             <RefreshCw size={13} className="animate-spin" /> Calculating blast radius...
           </span>
         )}
@@ -159,7 +158,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                boxShadow: 'var(--shadow-sm)',
               }}
             >
               <div>
@@ -185,7 +184,6 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                   border: `2px solid ${getSeverityColor(impactReport.overallSeverity)}`,
                   borderRadius: 'var(--radius-md)',
                   padding: '14px 24px',
-                  boxShadow: `0 0 20px ${getSeverityColor(impactReport.overallSeverity)}33`,
                 }}
               >
                 <span
@@ -221,7 +219,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                 padding: 16,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--cyan-primary)', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--primary-blue)', marginBottom: 12 }}>
                 <Route size={16} /> Potentially Affected API Routes ({impactReport.affectedRoutes.length})
               </div>
               {impactReport.affectedRoutes.length === 0 ? (
@@ -263,7 +261,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                 padding: 16,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--emerald-primary)', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--success-teal)', marginBottom: 12 }}>
                 <FileCheck size={16} /> Associated Test Suites ({impactReport.affectedTests.length})
               </div>
               {impactReport.affectedTests.length === 0 ? (
@@ -305,7 +303,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                 padding: 16,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--amber-primary)', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--warning-amber)', marginBottom: 12 }}>
                 <AlertOctagon size={16} /> Direct & Indirect Dependent Callers ({impactReport.directImpacts.length + impactReport.transitiveImpacts.length})
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -337,7 +335,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                           {dep.pathEvidence.length > 0 && (
                             <button
                               onClick={() => togglePath(dep.entityId)}
-                              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--cyan-primary)' }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--primary-blue)' }}
                             >
                               {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Evidence
                             </button>
@@ -350,11 +348,13 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
                           style={{
                             marginTop: 6,
                             padding: '8px 12px',
-                            background: '#0d1117',
+                            background: 'var(--bg-tertiary)',
                             borderRadius: 'var(--radius-sm)',
+                            border: '1px solid var(--border-color)',
+                            borderLeft: '3px solid var(--primary-blue)',
                             fontSize: 12,
                             fontFamily: 'var(--font-mono)',
-                            color: '#7ee787',
+                            color: 'var(--text-primary)',
                           }}
                         >
                           <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>Dependency Path Evidence:</div>

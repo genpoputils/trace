@@ -1,50 +1,65 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ==============================================================================
-   GenPopUtils Trace — Professional IDE Developer Workspace Design System
-   Default: Clean Light Theme with Electric Blue Accents
+   GenPopUtils Trace — Design Color System (Single Source of Truth)
    ============================================================================== */
 
 :root {
-  /* Light Surfaces (Default) */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8fafc;
-  --bg-tertiary: #f1f5f9;
-  --bg-elevated: #ffffff;
-  --bg-card: #ffffff;
-  
-  /* Borders & Dividers */
-  --border-color: #e2e8f0;
-  --border-subtle: #f1f5f9;
-  --border-focus: #0284c7;
-  
-  /* Typography */
-  --text-primary: #0f172a;
+  /* Exact Enforced Palette */
+  --primary-blue: #2563EB;
+  --primary-blue-hover: #1D4ED8;
+  --blue-selection-bg: #EFF6FF;
+  --main-bg: #F1F5F9;
+  --panel-bg: #FFFFFF;
+  --card-bg: #FFFFFF;
+  --text-primary: #1E293B;
   --text-secondary: #475569;
-  --text-muted: #64748b;
+  --text-muted: #64748B;
+  --border-color: #E2E8F0;
+  --border-subtle: #F1F5F9;
   
-  /* Primary & Accents (Electric Blue signature) */
-  --electric-blue: #0284c7;
-  --electric-blue-hover: #0369a1;
-  --electric-blue-glow: rgba(2, 132, 199, 0.15);
-  --cyan-primary: #0284c7;
-  --cyan-glow: rgba(2, 132, 199, 0.1);
-  
-  --emerald-primary: #059669;
-  --emerald-glow: rgba(5, 150, 105, 0.1);
-  --amber-primary: #d97706;
-  --amber-glow: rgba(217, 119, 6, 0.1);
-  --purple-primary: #7c3aed;
-  --purple-glow: rgba(124, 58, 237, 0.1);
-  --rose-primary: #e11d48;
-  --rose-glow: rgba(225, 29, 72, 0.1);
-  --blue-primary: #2563eb;
-  --blue-glow: rgba(37, 99, 235, 0.1);
+  --success-teal: #0D9488;
+  --success-bg: rgba(13, 148, 136, 0.08);
+  --warning-amber: #F59E0B;
+  --warning-bg: rgba(245, 158, 11, 0.08);
+  --error-red: #DC2626;
+  --error-bg: rgba(220, 38, 38, 0.08);
 
-  /* Code Block Colors */
-  --code-bg: #0f172a;
-  --code-text: #f8fafc;
-  --code-line-num: #64748b;
+  /* Semantic Mappings */
+  --bg-primary: var(--main-bg);
+  --bg-secondary: var(--panel-bg);
+  --bg-tertiary: #F8FAFC;
+  --bg-elevated: #FFFFFF;
+  --bg-card: var(--card-bg);
+  
+  --border-focus: var(--primary-blue);
+  
+  --electric-blue: var(--primary-blue);
+  --electric-blue-hover: var(--primary-blue-hover);
+  --electric-blue-glow: rgba(37, 99, 235, 0.15);
+  
+  --cyan-primary: var(--primary-blue);
+  --cyan-glow: var(--blue-selection-bg);
+  
+  --emerald-primary: var(--success-teal);
+  --emerald-glow: var(--success-bg);
+  
+  --amber-primary: var(--warning-amber);
+  --amber-glow: var(--warning-bg);
+  
+  --purple-primary: #7C3AED;
+  --purple-glow: rgba(124, 58, 237, 0.08);
+  
+  --rose-primary: var(--error-red);
+  --rose-glow: var(--error-bg);
+  
+  --blue-primary: var(--primary-blue);
+  --blue-glow: var(--blue-selection-bg);
+
+  /* Code Syntax Theme */
+  --code-bg: #0F172A;
+  --code-text: #F8FAFC;
+  --code-line-num: #64748B;
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
@@ -54,46 +69,64 @@
   --radius-lg: 12px;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
 }
 
-/* Dark Theme Variables */
+/* Dark Theme Variables (Separate, coherent dark-theme token set) */
 [data-theme="dark"] {
-  --bg-primary: #0b0f17;
-  --bg-secondary: #111827;
-  --bg-tertiary: #1a2234;
-  --bg-elevated: #1e293b;
-  --bg-card: #151d2c;
+  --primary-blue: #3B82F6;
+  --primary-blue-hover: #2563EB;
+  --blue-selection-bg: rgba(37, 99, 235, 0.16);
+  --main-bg: #0B0F17;
+  --panel-bg: #111827;
+  --card-bg: #151D2C;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --border-color: #26334D;
+  --border-subtle: #1E293B;
   
-  --border-color: #26334d;
-  --border-subtle: #1e293b;
-  --border-focus: #38bdf8;
+  --success-teal: #14B8A6;
+  --success-bg: rgba(20, 184, 166, 0.12);
+  --warning-amber: #FBBF24;
+  --warning-bg: rgba(251, 191, 36, 0.12);
+  --error-red: #EF4444;
+  --error-bg: rgba(239, 68, 68, 0.12);
+
+  --bg-primary: var(--main-bg);
+  --bg-secondary: var(--panel-bg);
+  --bg-tertiary: #1A2234;
+  --bg-elevated: #1E293B;
+  --bg-card: var(--card-bg);
   
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --border-focus: var(--primary-blue);
+  
+  --electric-blue: var(--primary-blue);
+  --electric-blue-hover: var(--primary-blue-hover);
+  --electric-blue-glow: rgba(59, 130, 246, 0.2);
+  
+  --cyan-primary: var(--primary-blue);
+  --cyan-glow: var(--blue-selection-bg);
+  
+  --emerald-primary: var(--success-teal);
+  --emerald-glow: var(--success-bg);
+  
+  --amber-primary: var(--warning-amber);
+  --amber-glow: var(--warning-bg);
+  
+  --purple-primary: #A78BFA;
+  --purple-glow: rgba(167, 139, 250, 0.12);
+  
+  --rose-primary: var(--error-red);
+  --rose-glow: var(--error-bg);
+  
+  --blue-primary: var(--primary-blue);
+  --blue-glow: var(--blue-selection-bg);
 
-  --electric-blue: #38bdf8;
-  --electric-blue-hover: #0284c7;
-  --electric-blue-glow: rgba(56, 189, 248, 0.2);
-  --cyan-primary: #38bdf8;
-  --cyan-glow: rgba(56, 189, 248, 0.15);
-
-  --emerald-primary: #10b981;
-  --emerald-glow: rgba(16, 185, 129, 0.15);
-  --amber-primary: #f59e0b;
-  --amber-glow: rgba(245, 158, 11, 0.15);
-  --purple-primary: #8b5cf6;
-  --purple-glow: rgba(139, 92, 246, 0.15);
-  --rose-primary: #f43f5e;
-  --rose-glow: rgba(244, 63, 94, 0.15);
-  --blue-primary: #3b82f6;
-  --blue-glow: rgba(59, 130, 246, 0.15);
-
-  --code-bg: #0d1117;
-  --code-text: #e6edf3;
-  --code-line-num: #484f58;
+  --code-bg: #0D1117;
+  --code-text: #E6EDF3;
+  --code-line-num: #484F58;
 }
 
 * {
@@ -122,11 +155,11 @@ body {
   background: var(--bg-secondary);
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #CBD5E1;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--text-muted);
 }
 [data-theme="dark"] ::-webkit-scrollbar-thumb {
   background: var(--border-color);
@@ -144,6 +177,12 @@ button {
   color: inherit;
 }
 
+/* Accessible focus indicator */
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--primary-blue);
+  outline-offset: 1px;
+}
+
 /* App Shell */
 .app-container {
   display: flex;
@@ -156,7 +195,7 @@ button {
 /* Top Navigation Bar */
 .app-header {
   height: 52px;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -179,10 +218,10 @@ button {
   width: 28px;
   height: 28px;
   border-radius: var(--radius-sm);
-  background: var(--electric-blue);
-  color: #fff;
+  background: var(--primary-blue);
+  color: #FFFFFF;
   font-weight: 700;
-  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.3);
+  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.3);
 }
 
 .brand-title {
@@ -195,7 +234,7 @@ button {
 }
 
 .brand-sub {
-  color: var(--electric-blue);
+  color: var(--primary-blue);
   font-weight: 600;
 }
 
@@ -234,9 +273,9 @@ button {
   gap: 4px;
   font-size: 11px;
   font-family: var(--font-mono);
-  background: rgba(2, 132, 199, 0.08);
-  border: 1px solid rgba(2, 132, 199, 0.25);
-  color: var(--electric-blue);
+  background: var(--blue-selection-bg);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  color: var(--primary-blue);
   padding: 2px 7px;
   border-radius: 4px;
   font-weight: 600;
@@ -253,26 +292,26 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   padding: 5px 12px;
   border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--text-muted);
   width: 210px;
-  transition: all 0.15s ease;
+  transition: all 0.12s ease;
 }
 
 .search-trigger-btn:hover {
-  border-color: var(--electric-blue);
-  background: #ffffff;
+  border-color: var(--primary-blue);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
 }
 
 .kbd-badge {
   margin-left: auto;
   font-size: 10px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 3px;
   padding: 1px 4px;
@@ -283,36 +322,35 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--electric-blue);
-  color: #fff;
+  background: var(--primary-blue);
+  color: #FFFFFF;
   font-size: 12px;
   font-weight: 600;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
-  transition: all 0.15s ease;
-  box-shadow: 0 1px 3px rgba(2, 132, 199, 0.25);
+  transition: all 0.12s ease;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
 }
 
 .btn-upload:hover {
-  background: var(--electric-blue-hover);
-  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.35);
+  background: var(--primary-blue-hover);
 }
 
 .btn-github {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: #0f172a;
-  color: #fff;
+  background: var(--text-primary);
+  color: #FFFFFF;
   font-size: 12px;
   font-weight: 600;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
-  transition: all 0.15s;
+  transition: all 0.12s;
 }
 
 .btn-github:hover {
-  background: #1e293b;
+  background: #0F172A;
 }
 
 /* Main Split Body */
@@ -361,8 +399,8 @@ button {
 }
 
 .nav-tab-btn.active {
-  background: rgba(2, 132, 199, 0.08);
-  color: var(--electric-blue);
+  background: var(--blue-selection-bg);
+  color: var(--primary-blue);
   font-weight: 600;
 }
 
@@ -397,7 +435,7 @@ button {
 /* Workspace Toolbar */
 .workspace-toolbar {
   height: 42px;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -437,13 +475,13 @@ button {
 .tool-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border-color: #cbd5e1;
+  border-color: #CBD5E1;
 }
 
 .tool-btn.active {
-  background: rgba(2, 132, 199, 0.08);
-  color: var(--electric-blue);
-  border-color: var(--electric-blue);
+  background: var(--blue-selection-bg);
+  color: var(--primary-blue);
+  border-color: var(--primary-blue);
   font-weight: 600;
 }
 
@@ -460,7 +498,7 @@ button {
 
 .panel-header {
   height: 42px;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -479,7 +517,7 @@ button {
 
 .panel-tabs {
   display: flex;
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -499,9 +537,9 @@ button {
 }
 
 .panel-tab.active {
-  color: var(--electric-blue);
-  border-bottom-color: var(--electric-blue);
-  background: rgba(2, 132, 199, 0.04);
+  color: var(--primary-blue);
+  border-bottom-color: var(--primary-blue);
+  background: var(--blue-selection-bg);
   font-weight: 600;
 }
 
@@ -516,28 +554,25 @@ button {
 
 /* React Flow Dotted Light Canvas */
 .react-flow__background {
-  background-color: #f8fafc !important;
-}
-[data-theme="dark"] .react-flow__background {
-  background-color: #0b0f17 !important;
+  background-color: var(--bg-primary) !important;
 }
 
 .react-flow__controls {
   box-shadow: var(--shadow-md) !important;
   border: 1px solid var(--border-color) !important;
   border-radius: var(--radius-sm) !important;
-  background: var(--bg-primary) !important;
+  background: var(--bg-secondary) !important;
 }
 
 .react-flow__controls-button {
-  background: var(--bg-primary) !important;
+  background: var(--bg-secondary) !important;
   border-bottom: 1px solid var(--border-color) !important;
   color: var(--text-secondary) !important;
 }
 
 .react-flow__controls-button:hover {
   background: var(--bg-tertiary) !important;
-  color: var(--electric-blue) !important;
+  color: var(--primary-blue) !important;
 }
 
 /* Custom Node Cards */
@@ -556,13 +591,13 @@ button {
 }
 
 .trace-node:hover {
-  border-color: var(--electric-blue);
-  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.15);
+  border-color: var(--primary-blue);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.12);
 }
 
 .trace-node.selected {
-  border-color: var(--electric-blue);
-  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.3), 0 4px 12px rgba(2, 132, 199, 0.2);
+  border-color: var(--primary-blue);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25), 0 4px 12px rgba(37, 99, 235, 0.18);
 }
 
 .trace-node-header {
@@ -572,6 +607,7 @@ button {
   margin-bottom: 6px;
 }
 
+/* Node Badges */
 .kind-badge {
   font-size: 10px;
   font-weight: 700;
@@ -581,16 +617,51 @@ button {
   letter-spacing: 0.04em;
 }
 
-.kind-badge.route { background: rgba(2, 132, 199, 0.1); color: var(--electric-blue); border: 1px solid rgba(2, 132, 199, 0.25); }
-.kind-badge.function { background: rgba(5, 150, 105, 0.1); color: var(--emerald-primary); border: 1px solid rgba(5, 150, 105, 0.25); }
-.kind-badge.method { background: rgba(5, 150, 105, 0.1); color: var(--emerald-primary); border: 1px solid rgba(5, 150, 105, 0.25); }
-.kind-badge.component { background: rgba(37, 99, 235, 0.1); color: #2563eb; border: 1px solid rgba(37, 99, 235, 0.25); }
-.kind-badge.hook { background: rgba(217, 119, 6, 0.1); color: #d97706; border: 1px solid rgba(217, 119, 6, 0.25); }
-.kind-badge.class { background: rgba(124, 58, 237, 0.1); color: var(--purple-primary); border: 1px solid rgba(124, 58, 237, 0.25); }
-.kind-badge.db_query { background: rgba(37, 99, 235, 0.1); color: var(--blue-primary); border: 1px solid rgba(37, 99, 235, 0.25); }
-.kind-badge.variable { background: rgba(217, 119, 6, 0.1); color: var(--amber-primary); border: 1px solid rgba(217, 119, 6, 0.25); }
-.kind-badge.file { background: rgba(100, 116, 139, 0.1); color: var(--text-muted); border: 1px solid rgba(100, 116, 139, 0.2); }
-.kind-badge.external_api { background: rgba(225, 29, 72, 0.1); color: var(--rose-primary); border: 1px solid rgba(225, 29, 72, 0.25); }
+.kind-badge.route {
+  background: var(--blue-selection-bg);
+  color: var(--primary-blue);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+.kind-badge.function, .kind-badge.method {
+  background: var(--success-bg);
+  color: var(--success-teal);
+  border: 1px solid rgba(13, 148, 136, 0.25);
+}
+.kind-badge.component {
+  background: var(--blue-selection-bg);
+  color: var(--primary-blue);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+.kind-badge.hook {
+  background: var(--warning-bg);
+  color: var(--warning-amber);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+.kind-badge.class {
+  background: var(--purple-glow);
+  color: var(--purple-primary);
+  border: 1px solid rgba(124, 58, 237, 0.25);
+}
+.kind-badge.db_query {
+  background: var(--blue-selection-bg);
+  color: var(--primary-blue);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+.kind-badge.variable {
+  background: var(--warning-bg);
+  color: var(--warning-amber);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+.kind-badge.file {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.kind-badge.external_api {
+  background: var(--error-bg);
+  color: var(--error-red);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+}
 
 .trace-node-title {
   font-size: 13px;
@@ -599,6 +670,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 4px;
+  color: var(--text-primary);
 }
 
 .trace-node-file {
@@ -627,8 +699,8 @@ button {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -636,7 +708,7 @@ button {
 }
 
 .modal-content {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   width: 90%;
@@ -663,7 +735,7 @@ button {
 }
 
 .dropzone {
-  border: 2px dashed #cbd5e1;
+  border: 2px dashed #CBD5E1;
   border-radius: var(--radius-md);
   padding: 30px 20px;
   display: flex;
@@ -671,13 +743,45 @@ button {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   cursor: pointer;
   transition: all 0.15s ease;
   text-align: center;
 }
 
 .dropzone:hover, .dropzone.active {
-  border-color: var(--electric-blue);
-  background: rgba(2, 132, 199, 0.04);
+  border-color: var(--primary-blue);
+  background: var(--blue-selection-bg);
+}
+
+/* Code Viewer & Preformatted Blocks */
+.code-viewer-container {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--code-bg);
+}
+
+.code-viewer-header {
+  background: #090D16;
+  border-bottom: 1px solid #1E293B;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #94A3B8;
+  font-family: var(--font-mono);
+}
+
+.code-pre {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--code-text);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
