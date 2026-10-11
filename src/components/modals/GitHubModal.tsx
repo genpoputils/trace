@@ -464,10 +464,11 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                   Trace runs 100% locally in your browser without requiring a backend server.
                 </p>
                 <ol style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <li><strong>Public Repositories:</strong> Analyze any public repository directly without signing in (subject to GitHub&apos;s 60 req/hr public rate limit).</li>
+                  <li><strong>Public Repositories:</strong> Analyze any public repository directly without signing in (streams files via CORS-enabled raw and REST APIs).</li>
                   <li><strong>Private Repositories:</strong> Generate a Personal Access Token on GitHub with <code>repo</code> scope at <code>github.com/settings/tokens</code>.</li>
-                  <li><strong>Local Security:</strong> Your token is kept only in active browser memory during this tab session. It is never stored on disk, never sent to external servers, and never written to localStorage.</li>
-                  <li><strong>CORS Fallback:</strong> If browser CORS restrictions prevent direct zipball downloads for specific repositories, download the repository <code>.zip</code> directly from GitHub and use Trace&apos;s <strong>&quot;Import Repository Archive&quot;</strong> button.</li>
+                  <li><strong>Local Security:</strong> Your token is kept only in active browser memory during this tab session. It is never stored on disk, never sent to external servers, and never written to localStorage or IndexedDB.</li>
+                  <li><strong>Tree-Based Import:</strong> Files are enumerated and downloaded individually pinned to the resolved commit SHA, avoiding archive redirection blocks.</li>
+                  <li><strong>ZIP Fallback:</strong> If offline or rate-limited, download the repository <code>.zip</code> directly from GitHub and use Trace&apos;s <strong>&quot;Import Repository Archive&quot;</strong> button.</li>
                 </ol>
               </div>
 
@@ -538,11 +539,15 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
 
           {/* Error display */}
           {error && (() => {
-            const corsMatch = error.match(/direct download of '([^'/]+)\/([^']+)'/);
-            const targetOwner = lastAttemptedRepo?.owner || (corsMatch ? corsMatch[1] : null);
-            const targetRepo = lastAttemptedRepo?.repo || (corsMatch ? corsMatch[2] : null);
+            const targetOwner = lastAttemptedRepo?.owner;
+            const targetRepo = lastAttemptedRepo?.repo;
             const targetBranch = lastAttemptedRepo?.branch || 'main';
-            const isCorsError = error.includes('CORS') || error.includes('direct download');
+            const isRateLimit = error.toLowerCase().includes('rate limit');
+            const isPrivateOrAuth =
+              error.toLowerCase().includes('unauthorized') ||
+              error.toLowerCase().includes('token') ||
+              error.toLowerCase().includes('private') ||
+              error.toLowerCase().includes('not found');
 
             return (
               <div
@@ -563,7 +568,19 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                   <span style={{ lineHeight: 1.4 }}>{error}</span>
                 </div>
 
-                {isCorsError && targetOwner && targetRepo && (
+                {isRateLimit && (
+                  <div style={{ fontSize: 12, color: 'var(--text-primary)', padding: 8, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
+                    💡 <strong>Rate Limit Tip:</strong> GitHub limits anonymous requests to 60/hr. Enter a Personal Access Token in the Repository Selection tab to increase your limit to 5,000 requests/hour.
+                  </div>
+                )}
+
+                {isPrivateOrAuth && !personalToken && (
+                  <div style={{ fontSize: 12, color: 'var(--text-primary)', padding: 8, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
+                    🔒 <strong>Authentication Tip:</strong> If this repository is private, enter a Personal Access Token with <code>repo</code> scope above.
+                  </div>
+                )}
+
+                {targetOwner && targetRepo && (
                   <div
                     style={{
                       padding: 12,
@@ -577,10 +594,10 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                     }}
                   >
                     <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Download size={14} color="var(--primary-blue)" /> 1-Click Browser Download & Import
+                      <Download size={14} color="var(--primary-blue)" /> Alternative: 1-Click Browser Download & Import
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                      GitHub&apos;s download server (<code>codeload.github.com</code>) blocks direct client-side fetch requests in static apps. Use the link below to download the ZIP directly via your browser, then import it:
+                      You can download the repository ZIP directly to your computer and import it with 1 click:
                     </div>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -622,10 +639,6 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                       >
                         <UploadCloud size={13} /> 2. Import Downloaded ZIP
                       </button>
-                    </div>
-
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>
-                      <strong>Repository Language Notice:</strong> Trace analyzes <strong>TypeScript and JavaScript</strong> projects (.ts, .tsx, .js, .jsx). Non-JS/TS repositories (such as Rust or Python in <em>{targetOwner}/{targetRepo}</em>) will only index JS/TS components.
                     </div>
                   </div>
                 )}

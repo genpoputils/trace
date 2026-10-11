@@ -263,14 +263,41 @@ export class BrowserAnalysisService {
     files: Record<string, FileRecord>,
     onProgress?: ProgressCallback
   ): Promise<{ projectId: string; analysis: ProjectAnalysis }> {
-    const analyzer = new CodebaseAnalyzer();
-    const analysis = analyzer.analyzeProject(projectName, files, onProgress);
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    let analysis: ProjectAnalysis;
+
+    if (this.workerAvailable && this.worker) {
+      const res = await new Promise<{
+        analysis: ProjectAnalysis;
+        skippedFiles: { path: string; reason: string }[];
+        warnings: string[];
+      }>((resolve, reject) => {
+        this.activeJobs.set(jobId, { resolve, reject, onProgress });
+        const req: WorkerRequest = {
+          type: 'ANALYZE_FILES',
+          id: jobId,
+          projectName,
+          files,
+        };
+        try {
+          this.worker!.postMessage(req);
+        } catch (postErr) {
+          this.activeJobs.delete(jobId);
+          reject(postErr instanceof Error ? postErr : new Error(String(postErr)));
+        }
+      });
+      analysis = res.analysis;
+    } else {
+      const analyzer = new CodebaseAnalyzer();
+      analysis = analyzer.analyzeProject(projectName, files, onProgress);
+    }
+
     await localProjectStore.saveProject(analysis);
     return { projectId: analysis.projectId, analysis };
   }
 
   /**
-   * Import from GitHub directly via browser
+   * Import from GitHub directly via browser tree & blob streaming
    */
   public async importGitHubRepo(
     owner: string,
@@ -291,7 +318,7 @@ export class BrowserAnalysisService {
       const commit = await browserGitHubClient.getLatestCommit(owner, repo, branch, token);
       commitSha = commit.sha;
     } catch {
-      // Continue to download if commit listing failed
+      // Continue to fetch if commit listing failed
     }
 
     // 2. Check cached analysis in IndexedDB / memory
@@ -307,31 +334,38 @@ export class BrowserAnalysisService {
       }
     }
 
-    // 3. Download archive directly from GitHub into browser memory
+    // 3. Tree-based source file download pinned to commit SHA
     onProgress?.('fetching', {
-      current: 20,
+      current: 15,
       total: 100,
-      message: `Downloading source archive for ${owner}/${repo}@${branch}...`,
+      message: `Scanning Git tree and streaming source files for ${owner}/${repo}@${branch}...`,
     });
 
-    const { buffer, commitSha: resolvedSha } = await browserGitHubClient.downloadRepoArchive(
-      owner,
-      repo,
-      branch,
-      token
-    );
+    const { files, commitSha: resolvedSha, warnings, skippedFiles } =
+      await browserGitHubClient.fetchRepositorySourceFiles({
+        owner,
+        repo,
+        branch,
+        token,
+        onProgress,
+      });
 
     const actualSha = commitSha || resolvedSha;
 
     // 4. Ingest and analyze
-    const { analysis } = await this.importZipArchive(
-      buffer,
-      `${owner}-${repo}.zip`,
-      {},
+    onProgress?.('parsing', {
+      current: 0,
+      total: Object.keys(files).length,
+      message: `Analyzing syntax & AST for ${Object.keys(files).length} files...`,
+    });
+
+    const { analysis } = await this.analyzeFiles(
+      `${owner}/${repo}`,
+      files,
       onProgress
     );
 
-    // Record verified Git revision metadata
+    // Record verified Git revision metadata (PAT is NEVER stored in gitMetadata)
     analysis.projectName = `${owner}/${repo}`;
     analysis.gitMetadata = {
       owner,
@@ -342,6 +376,22 @@ export class BrowserAnalysisService {
       repoUrl: `https://github.com/${owner}/${repo}`,
     };
 
+    // Attach any warnings and skipped file records
+    for (const sf of skippedFiles) {
+      analysis.warnings.push({
+        filePath: sf.path,
+        message: sf.reason,
+        severity: 'info',
+      });
+    }
+    for (const w of warnings) {
+      analysis.warnings.push({
+        message: w,
+        severity: 'warning',
+      });
+    }
+
+    // Update project in local store with verified commit revision key
     await localProjectStore.saveProject(analysis);
 
     return { projectId: analysis.projectId, analysis, cached: false };

@@ -16,7 +16,7 @@ export interface IngestionResult {
   warnings: string[];
 }
 
-const DEFAULT_EXCLUDED_DIRS = [
+export const DEFAULT_EXCLUDED_DIRS = [
   'node_modules',
   '.git',
   '.next',
@@ -60,7 +60,7 @@ const DEFAULT_EXCLUDED_DIRS = [
   'swagger',
 ];
 
-const DEFAULT_EXCLUDED_EXTS = [
+export const DEFAULT_EXCLUDED_EXTS = [
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico',
   '.woff', '.woff2', '.ttf', '.eot', '.otf',
   '.zip', '.tar', '.gz', '.7z', '.rar',
@@ -68,7 +68,73 @@ const DEFAULT_EXCLUDED_EXTS = [
   '.exe', '.dll', '.so', '.dylib', '.wasm',
   '.lock', '.map', '.snap', '.min.js', '.min.css', '.bundle.js',
   '.md', '.txt', '.csv', '.tsv', '.dart', '.kt', '.swift',
+  '.idx', '.pack',
 ];
+
+export function isPathSafe(filePath: string): boolean {
+  if (!filePath || typeof filePath !== 'string') return false;
+  if (filePath.includes('\0')) return false;
+  if (filePath.includes('..')) return false;
+  if (path.isAbsolute(filePath)) return false;
+  if (filePath.startsWith('/') || filePath.startsWith('\\')) return false;
+  const normalized = path.normalize(filePath).replace(/\\/g, '/');
+  if (normalized.startsWith('../') || normalized === '..' || path.isAbsolute(normalized)) {
+    return false;
+  }
+  return true;
+}
+
+export function detectLanguage(filePath: string): FileRecord['language'] {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.ts') return 'typescript';
+  if (ext === '.tsx') return 'tsx';
+  if (ext === '.js' || ext === '.mjs' || ext === '.cjs') return 'javascript';
+  if (ext === '.jsx') return 'jsx';
+  if (ext === '.json') return 'json';
+  return 'unknown';
+}
+
+export function isEligibleSourceFile(
+  filePath: string,
+  size?: number,
+  maxFileSize: number = 2 * 1024 * 1024
+): { eligible: boolean; reason?: string } {
+  if (!isPathSafe(filePath)) {
+    return { eligible: false, reason: 'Security violation: Path traversal or invalid character detected' };
+  }
+
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+  const segments = normalized.split('/');
+  if (segments.some((seg) => DEFAULT_EXCLUDED_DIRS.includes(seg.toLowerCase()))) {
+    return { eligible: false, reason: 'Excluded build or dependency directory (test, build, or generated)' };
+  }
+
+  const ext = path.extname(normalized).toLowerCase();
+  const lower = normalized.toLowerCase();
+
+  if (
+    DEFAULT_EXCLUDED_EXTS.includes(ext) ||
+    normalized.endsWith('.d.ts') ||
+    lower.includes('.spec.') ||
+    lower.includes('.test.') ||
+    lower.includes('.e2e-spec.') ||
+    lower.includes('.mock.') ||
+    normalized.endsWith('package-lock.json') ||
+    normalized.endsWith('yarn.lock') ||
+    normalized.endsWith('pnpm-lock.yaml')
+  ) {
+    return { eligible: false, reason: 'Non-source, test spec, declaration, or lockfile asset' };
+  }
+
+  if (size !== undefined && size > maxFileSize) {
+    return {
+      eligible: false,
+      reason: `File size (${(size / 1024 / 1024).toFixed(2)}MB) exceeds limit of ${(maxFileSize / 1024 / 1024).toFixed(2)}MB`,
+    };
+  }
+
+  return { eligible: true };
+}
 
 export class ZipIngestionService {
   /**
@@ -205,26 +271,10 @@ export class ZipIngestionService {
   }
 
   public isPathSafe(filePath: string): boolean {
-    if (!filePath || typeof filePath !== 'string') return false;
-    if (filePath.includes('\0')) return false;
-    if (filePath.includes('..')) return false;
-    if (path.isAbsolute(filePath)) return false;
-    if (filePath.startsWith('/') || filePath.startsWith('\\')) return false;
-    // Check path normalization
-    const normalized = path.normalize(filePath).replace(/\\/g, '/');
-    if (normalized.startsWith('../') || normalized === '..' || path.isAbsolute(normalized)) {
-      return false;
-    }
-    return true;
+    return isPathSafe(filePath);
   }
 
-  private detectLanguage(filePath: string): FileRecord['language'] {
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext === '.ts') return 'typescript';
-    if (ext === '.tsx') return 'tsx';
-    if (ext === '.js' || ext === '.mjs' || ext === '.cjs') return 'javascript';
-    if (ext === '.jsx') return 'jsx';
-    if (ext === '.json') return 'json';
-    return 'unknown';
+  public detectLanguage(filePath: string): FileRecord['language'] {
+    return detectLanguage(filePath);
   }
 }

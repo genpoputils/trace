@@ -38,3 +38,34 @@ export interface GitHubAuthStatus {
     avatarUrl?: string;
   };
 }
+
+export interface GitTreeItem {
+  path: string;
+  mode: string;
+  type: 'blob' | 'tree' | 'commit';
+  sha: string;
+  size?: number;
+  url: string;
+}
+
+export interface GitTreeResponse {
+  sha: string;
+  url: string;
+  tree: GitTreeItem[];
+  truncated: boolean;
+}
+
+export interface GitBlobResponse {
+  sha: string;
+  size: number;
+  url: string;
+  content: string;
+  encoding: 'base64' | 'utf-8';
+}
+
+export interface RepoSourceFilesResult {
+  files: Record<string, import('../types/trace').FileRecord>;
+  commitSha: string;
+  warnings: string[];
+  skippedFiles: { path: string; reason: string }[];
+}
