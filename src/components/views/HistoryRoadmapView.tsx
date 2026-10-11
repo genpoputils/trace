@@ -7,6 +7,9 @@ import {
   GitCommit,
   GitBranch,
   ArrowRight,
+  Clock,
+  FileQuestion,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface HistoryRoadmapViewProps {
@@ -19,6 +22,8 @@ export const HistoryRoadmapView: React.FC<HistoryRoadmapViewProps> = ({
   onNavigateTab,
 }) => {
   const gitMeta = analysis.gitMetadata;
+  const hasCommitSha = Boolean(gitMeta?.commitSha && gitMeta.commitSha.trim());
+  const hasBranch = Boolean(gitMeta?.branch && gitMeta.branch.trim());
 
   return (
     <div
@@ -28,6 +33,8 @@ export const HistoryRoadmapView: React.FC<HistoryRoadmapViewProps> = ({
         padding: 24,
         background: 'var(--bg-primary)',
       }}
+      role="region"
+      aria-label="Commit history roadmap view"
     >
       <div style={{ maxWidth: 880, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
         {/* Banner */}
@@ -52,59 +59,107 @@ export const HistoryRoadmapView: React.FC<HistoryRoadmapViewProps> = ({
           </p>
         </div>
 
-        {/* Current Active Commit Card */}
+        {/* Current Active Commit Metadata Card */}
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <GitCommit size={16} color="var(--primary-blue)" /> Current Verified Revision
+            {hasCommitSha ? (
+              <>
+                <GitCommit size={16} color="var(--primary-blue)" /> Analyzed Git Revision
+              </>
+            ) : (
+              <>
+                <FileQuestion size={16} color="var(--text-muted)" /> Repository Revision Status
+              </>
+            )}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-              <span style={{ color: 'var(--text-muted)' }}>Analyzed Commit SHA:</span>
-              <code style={{ background: 'var(--bg-tertiary)', padding: '2px 8px', borderRadius: 4, color: 'var(--primary-blue)' }}>
-                {gitMeta?.commitSha || 'c8f12a9712...'}
-              </code>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Commit SHA */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>Analyzed Commit SHA:</span>
+              {hasCommitSha ? (
+                <code
+                  style={{
+                    background: 'var(--bg-tertiary)',
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    color: 'var(--primary-blue)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                  }}
+                >
+                  {gitMeta!.commitSha}
+                </code>
+              ) : (
+                <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 12 }}>
+                  Revision unavailable (imported without Git metadata)
+                </span>
+              )}
             </div>
+
+            {/* Branch */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-              <span style={{ color: 'var(--text-muted)' }}>Branch:</span>
-              <span className="branch-pill">
-                <GitBranch size={11} /> {gitMeta?.branch || 'main'}
+              <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>Branch:</span>
+              {hasBranch ? (
+                <span className="branch-pill">
+                  <GitBranch size={11} /> {gitMeta!.branch}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                  Not specified
+                </span>
+              )}
+            </div>
+
+            {/* Analysis Timestamp */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+              <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>Analysis Timestamp:</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Clock size={13} color="var(--text-muted)" />
+                {analysis.analyzedAt ? new Date(analysis.analyzedAt).toLocaleString() : 'Unavailable'}
               </span>
             </div>
+
+            {/* Ingestion Source */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-              <span style={{ color: 'var(--text-muted)' }}>Analysis Timestamp:</span>
-              <span>{new Date(analysis.analyzedAt).toLocaleString()}</span>
+              <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>Source Provider:</span>
+              <span className="kind-badge function" style={{ fontSize: 11 }}>
+                {hasCommitSha ? 'GitHub Remote Tree' : 'Local Archive / In-Memory'}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* What's Coming in Milestone EPIC-E */}
+        {/* Planned Capabilities in Milestone EPIC-E */}
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
-            Capabilities in Development for Milestone EPIC-E:
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+            Planned Capabilities (Milestone EPIC-E)
           </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+            The following capabilities are on the Trace architecture roadmap and are not yet enabled for live code comparisons:
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-            <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-              <strong>GT-040: Revision Diff Engine</strong>
+            <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+              <strong>GT-040: Revision Diff Engine (Planned)</strong>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                Compare AST symbols and dependency graphs across two arbitrary git revisions.
+                Compare AST symbols and dependency graphs across two arbitrary git revisions without cloning.
               </p>
             </div>
-            <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-              <strong>GT-041: Cross-Revision Symbol Matching</strong>
+            <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+              <strong>GT-041: Cross-Revision Symbol Matching (Planned)</strong>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                 Track renamed, moved, and modified methods across refactoring commits.
               </p>
             </div>
-            <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-              <strong>GT-042: Graph Removal Visualizer</strong>
+            <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+              <strong>GT-042: Graph Removal Visualizer (Planned)</strong>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                Highlight newly introduced, deleted, or altered graph nodes with color coding.
+                Highlight newly introduced, deleted, or altered graph nodes with comparative color coding.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Action Link to Current Impact Analysis */}
+        {/* Distinction & Action Link to Current Impact Analysis */}
         <div
           style={{
             padding: 16,
@@ -114,14 +169,16 @@ export const HistoryRoadmapView: React.FC<HistoryRoadmapViewProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
           }}
         >
           <div>
-            <strong style={{ color: 'var(--primary-blue)', fontSize: 14 }}>
-              Looking for Change Impact Analysis?
+            <strong style={{ color: 'var(--primary-blue)', fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <CheckCircle2 size={16} /> Current Functionality: Change Impact Analysis
             </strong>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-              Impact Analysis calculates the blast radius and affected routes for any symbol right now.
+              While multi-revision Git diffing is in development, you can use Impact Analysis to calculate blast radius, callers, and affected routes for any symbol right now.
             </p>
           </div>
           <button
@@ -129,7 +186,7 @@ export const HistoryRoadmapView: React.FC<HistoryRoadmapViewProps> = ({
             className="btn-upload"
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            Go to Impact Analysis <ArrowRight size={14} />
+            Open Impact Analysis <ArrowRight size={14} />
           </button>
         </div>
       </div>

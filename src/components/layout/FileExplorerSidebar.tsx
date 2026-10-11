@@ -102,18 +102,27 @@ export const FileExplorerSidebar: React.FC<FileExplorerSidebarProps> = ({
               const symbolsInFile = fileSymbolsMap.get(filePath) || [];
               const isFileActive = activeFilePath === filePath;
 
+              const handleSelectFile = () => {
+                const target =
+                  symbolsInFile[0] ||
+                  Object.values(analysis.entities).find((e) => e.filePath === filePath);
+                if (target) onSelectEntity(target.id);
+              };
+
               return (
-                <div
+                <button
+                  type="button"
                   key={filePath}
-                  role="listitem"
-                  onClick={() => {
-                    const target =
-                      symbolsInFile[0] ||
-                      Object.values(analysis.entities).find((e) => e.filePath === filePath);
-                    if (target) onSelectEntity(target.id);
+                  onClick={handleSelectFile}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectFile();
+                    }
                   }}
-                  className={`nav-tab-btn ${isFileActive ? 'active' : ''}`}
+                  className={`nav-tab-btn file-tree-btn ${isFileActive ? 'active' : ''}`}
                   style={{
+                    width: '100%',
                     padding: '5px 8px',
                     borderRadius: 'var(--radius-sm)',
                     fontSize: 12,
@@ -121,8 +130,13 @@ export const FileExplorerSidebar: React.FC<FileExplorerSidebarProps> = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
+                    border: isFileActive ? '1px solid rgba(37, 99, 235, 0.3)' : '1px solid transparent',
+                    background: isFileActive ? 'var(--blue-selection-bg)' : 'transparent',
+                    textAlign: 'left',
                   }}
                   title={`${filePath} (${symbolsInFile.length} symbols)`}
+                  aria-label={`File ${filePath}, containing ${symbolsInFile.length} symbols`}
+                  aria-current={isFileActive ? 'true' : undefined}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
                     <FileCode
@@ -155,7 +169,7 @@ export const FileExplorerSidebar: React.FC<FileExplorerSidebarProps> = ({
                   >
                     {symbolsInFile.length}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>

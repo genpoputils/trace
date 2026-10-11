@@ -252,6 +252,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .breadcrumb-repo {
   font-weight: 600;
   color: var(--text-primary);
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .branch-pill {
@@ -992,6 +996,29 @@ select:focus-visible,
 }
 
 /* Responsive Header */
+@media (max-width: 1280px) {
+  .btn-label-desktop {
+    display: none;
+  }
+  .search-trigger-btn {
+    width: 170px;
+  }
+  .breadcrumb-repo {
+    max-width: 130px;
+  }
+}
+
+@media (max-width: 960px) {
+  .commit-pill {
+    display: none;
+  }
+  .branch-pill {
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 @media (max-width: 768px) {
   .app-header {
     padding: 0 10px;

@@ -114,9 +114,30 @@ export default function TraceHomePage() {
             } else if (project.stats?.mostConnected?.[0]) {
               setSelectedEntityId(project.stats.mostConnected[0].symbolId);
             }
+          } else {
+            // Recover gracefully if project is missing
+            browserAnalysisService.listProjects().then((list) => {
+              setProjectsList(list);
+              const fallback = list.find((p) => p.id !== projectId);
+              if (fallback) {
+                browserAnalysisService.getProject(fallback.id).then((p) => {
+                  if (p) {
+                    setAnalysis(p);
+                    setCurrentProjectId(fallback.id);
+                  }
+                });
+              } else {
+                setAnalysis(null);
+                setCurrentProjectId('');
+              }
+            });
           }
         })
-        .catch((err) => console.error('Failed to load project:', err))
+        .catch((err) => {
+          console.error('Failed to load project:', err);
+          setAnalysis(null);
+          setCurrentProjectId('');
+        })
         .finally(() => setLoading(false));
     },
     [activeTab]
@@ -211,14 +232,37 @@ export default function TraceHomePage() {
 
   const handleDeleteProject = useCallback(
     async (projectId: string) => {
-      await browserAnalysisService.deleteProject(projectId);
-      refreshProjectsList();
-      if (currentProjectId === projectId) {
-        loadProject('sample-ecommerce-api');
+      try {
+        const deleted = await browserAnalysisService.deleteProject(projectId);
+        const updatedList = await browserAnalysisService.listProjects();
+        setProjectsList(updatedList);
+        if (deleted && currentProjectId === projectId) {
+          const nextProj = updatedList.find((p) => p.id !== projectId);
+          if (nextProj) {
+            loadProject(nextProj.id);
+          } else {
+            try {
+              await loadProject('sample-ecommerce-api');
+            } catch {
+              setAnalysis(null);
+              setCurrentProjectId('');
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to delete project:', err);
       }
     },
-    [currentProjectId, refreshProjectsList, loadProject]
+    [currentProjectId, loadProject]
   );
+
+  // Notify graph canvases when sidebars or panels toggle geometry
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [fileExplorerOpen, inspectorOpen]);
 
   return (
     <div className="app-container">
@@ -509,14 +553,14 @@ export default function TraceHomePage() {
         }}
       />
 
-      {analysis && (
-        <SearchModal
-          isOpen={searchModalOpen}
-          onClose={() => setSearchModalOpen(false)}
-          analysis={analysis}
-          onSelectEntity={handleEntitySelect}
-        />
-      )}
+      <SearchModal
+        isOpen={searchModalOpen}
+        onClose={() => setSearchModalOpen(false)}
+        analysis={analysis}
+        onSelectEntity={handleEntitySelect}
+        onOpenGitHubModal={() => setGithubModalOpen(true)}
+        onOpenUploadModal={() => setUploadModalOpen(true)}
+      />
     </div>
   );
 }

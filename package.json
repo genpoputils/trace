@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test tests",
+    "test": "tsx scripts/run-tests.ts",
     "trace": "tsx bin/trace-cli.ts"
   },
   "dependencies": {
