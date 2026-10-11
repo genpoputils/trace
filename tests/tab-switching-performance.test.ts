@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { ProjectAnalysis, TraceEntity } from '../src/lib/types/trace';
-import { ExecutionPathEngine, ExecutionPath } from '../src/lib/tracing/execution-path';
-import { ImpactAnalysisService, ImpactReport } from '../src/lib/impact/impact-analysis';
+import { ProjectAnalysis, TraceEntity, ExecutionPath, ImpactReport } from '../src/lib/types/trace';
+import { ExecutionPathEngine } from '../src/lib/tracing/execution-path';
+import { ImpactAnalysisService } from '../src/lib/impact/impact-analysis';
 
 describe('Tab Switching Responsiveness & Caching Suite', () => {
   // Construct a realistic mock large project with 1,000 files and 10,000 entities
@@ -14,6 +14,8 @@ describe('Tab Switching Responsiveness & Caching Suite', () => {
     files: {},
     entities: {},
     relationships: [],
+    warnings: [],
+    limitations: [],
     stats: {
       totalFiles: 1000,
       totalSymbols: 10000,
@@ -33,7 +35,8 @@ describe('Tab Switching Responsiveness & Caching Suite', () => {
     largeMockProject.files[filePath] = {
       path: filePath,
       language: 'typescript',
-      sizeBytes: 15000,
+      lines: 35,
+      size: 15000,
       content: '// large file content\n'.repeat(35),
     };
 
@@ -44,7 +47,7 @@ describe('Tab Switching Responsiveness & Caching Suite', () => {
         name: `func_${f}_${e}`,
         kind: e === 0 ? 'route' : 'function',
         filePath,
-        location: { startLine: e * 3 + 1, endLine: e * 3 + 3 },
+        location: { filePath, startLine: e * 3 + 1, endLine: e * 3 + 3, startColumn: 0, endColumn: 10 },
         isExported: true,
       };
 
@@ -54,7 +57,8 @@ describe('Tab Switching Responsiveness & Caching Suite', () => {
           sourceId: `entity_${f}_0`,
           targetId: entityId,
           kind: 'calls',
-          location: { startLine: e * 3 + 1, endLine: e * 3 + 2 },
+          confidence: 'statically_resolved',
+          location: { filePath, startLine: e * 3 + 1, endLine: e * 3 + 2, startColumn: 0, endColumn: 10 },
         });
       }
     }

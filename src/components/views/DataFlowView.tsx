@@ -189,8 +189,15 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
                         {step.flowType.toUpperCase()}
                       </span>
                       <strong
-                        style={{ fontSize: 13, color: 'var(--text-primary)', cursor: step.symbolId ? 'pointer' : 'default' }}
-                        onClick={() => step.symbolId && onSelectEntity(step.symbolId)}
+                        style={{
+                          fontSize: 13,
+                          color: 'var(--text-primary)',
+                          cursor: (step.targetEntityId || step.sourceEntityId) ? 'pointer' : 'default',
+                        }}
+                        onClick={() => {
+                          const target = step.targetEntityId || step.sourceEntityId;
+                          if (target) onSelectEntity(target);
+                        }}
                         title="Click to inspect this entity"
                       >
                         {step.symbolName}
