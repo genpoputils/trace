@@ -15,6 +15,8 @@ import {
   Key,
   HelpCircle,
   Play,
+  Download,
+  UploadCloud,
 } from 'lucide-react';
 import { GitHubRepo, GitHubBranch } from '@/lib/github/types';
 import { browserGitHubClient } from '@/lib/github/browser-github-client';
@@ -24,12 +26,14 @@ interface GitHubModalProps {
   isOpen: boolean;
   onClose: () => void;
   onProjectLoaded: (projectId: string) => void;
+  onOpenUploadModal?: () => void;
 }
 
 export const GitHubModal: React.FC<GitHubModalProps> = ({
   isOpen,
   onClose,
   onProjectLoaded,
+  onOpenUploadModal,
 }) => {
   const [activeTab, setActiveTab] = useState<'connect' | 'public' | 'setup'>('connect');
 
@@ -58,6 +62,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
     progress: { current: number; total: number; message: string };
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastAttemptedRepo, setLastAttemptedRepo] = useState<{ owner: string; repo: string; branch: string } | null>(null);
 
   const mouseDownOnOverlayRef = React.useRef(false);
   const activePollRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -118,6 +123,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   };
 
   const handleStartAnalysis = async (owner: string, repo: string, branch: string) => {
+    setLastAttemptedRepo({ owner, repo, branch });
     setAnalyzing(true);
     setError(null);
     setCurrentJob(null);
@@ -530,30 +536,107 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
               </div>
 
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                Analysis executes on the server background worker. You can safely keep this open or close it.
+                Analysis executes directly in your browser&apos;s Web Worker. You can safely keep this open or close it.
               </div>
             </div>
           )}
 
           {/* Error display */}
-          {error && (
-            <div
-              style={{
-                padding: 10,
-                background: 'var(--error-bg)',
-                border: '1px solid var(--error-red)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 12,
-                color: 'var(--error-red)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <AlertTriangle size={16} />
-              {error}
-            </div>
-          )}
+          {error && (() => {
+            const corsMatch = error.match(/direct download of '([^'/]+)\/([^']+)'/);
+            const targetOwner = lastAttemptedRepo?.owner || (corsMatch ? corsMatch[1] : null);
+            const targetRepo = lastAttemptedRepo?.repo || (corsMatch ? corsMatch[2] : null);
+            const targetBranch = lastAttemptedRepo?.branch || 'main';
+            const isCorsError = error.includes('CORS') || error.includes('direct download');
+
+            return (
+              <div
+                style={{
+                  padding: 12,
+                  background: 'var(--error-bg)',
+                  border: '1px solid var(--error-red)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 12,
+                  color: 'var(--error-red)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ lineHeight: 1.4 }}>{error}</span>
+                </div>
+
+                {isCorsError && targetOwner && targetRepo && (
+                  <div
+                    style={{
+                      padding: 12,
+                      background: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
+                      marginTop: 2,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Download size={14} color="var(--primary-blue)" /> 1-Click Browser Download & Import
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      GitHub&apos;s download server (<code>codeload.github.com</code>) blocks direct client-side fetch requests in static apps. Use the link below to download the ZIP directly via your browser, then import it:
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                      <a
+                        href={`https://github.com/${targetOwner}/${targetRepo}/archive/refs/heads/${targetBranch}.zip`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="tool-btn active"
+                        style={{
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '7px 12px',
+                          background: 'var(--primary-blue)',
+                          color: '#fff',
+                          borderRadius: 'var(--radius-sm)',
+                          fontWeight: 500,
+                          fontSize: 12,
+                        }}
+                      >
+                        <Download size={13} /> 1. Download {targetRepo}.zip
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenUploadModal?.();
+                        }}
+                        className="tool-btn"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '7px 12px',
+                          fontSize: 12,
+                        }}
+                      >
+                        <UploadCloud size={13} /> 2. Import Downloaded ZIP
+                      </button>
+                    </div>
+
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>
+                      <strong>Repository Language Notice:</strong> Trace analyzes <strong>TypeScript and JavaScript</strong> projects (.ts, .tsx, .js, .jsx). Non-JS/TS repositories (such as Rust or Python in <em>{targetOwner}/{targetRepo}</em>) will only index JS/TS components.
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

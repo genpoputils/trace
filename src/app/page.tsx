@@ -591,6 +591,10 @@ export default function TraceHomePage() {
       <GitHubModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
+        onOpenUploadModal={() => {
+          setGithubModalOpen(false);
+          setUploadModalOpen(true);
+        }}
         onProjectLoaded={(newProjectId) => {
           refreshProjectsList();
           loadProject(newProjectId);
