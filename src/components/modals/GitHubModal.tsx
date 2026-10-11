@@ -101,6 +101,19 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
     };
   }, []);
 
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   // Fetch repos on modal open
   useEffect(() => {
     if (isOpen) {
@@ -159,6 +172,9 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   return (
     <div
       className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="github-modal-title"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           mouseDownOnOverlayRef.current = true;
@@ -177,7 +193,9 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <FolderGit2 size={20} color="var(--primary-blue)" />
             <div>
-              <strong style={{ fontSize: 15, display: 'block' }}>Connect GitHub Repository</strong>
+              <strong id="github-modal-title" style={{ fontSize: 15, display: 'block' }}>
+                Connect GitHub Repository
+              </strong>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 Analyze source code, extract dependency graph, and link exact commit SHA
               </span>

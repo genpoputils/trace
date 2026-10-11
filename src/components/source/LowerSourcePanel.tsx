@@ -6,7 +6,8 @@ import {
   Code2,
   ChevronDown,
   ChevronUp,
-  Sparkles,
+  Maximize2,
+  Minimize2,
   Zap,
   Copy,
   Check,
@@ -17,18 +18,19 @@ interface LowerSourcePanelProps {
   analysis: ProjectAnalysis;
   selectedEntityId: string | null;
   onSelectEntity: (entityId: string) => void;
+  defaultHeightMode?: 'collapsed' | 'compact' | 'expanded';
 }
 
 const LINE_HEIGHT = 22;
-const VIEWPORT_HEIGHT = 242;
 
 export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
   analysis,
   selectedEntityId,
   onSelectEntity,
+  defaultHeightMode = 'compact',
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'source' | 'context' | 'ai'>('source');
+  const [heightMode, setHeightMode] = useState<'collapsed' | 'compact' | 'expanded'>(defaultHeightMode);
+  const [activeTab, setActiveTab] = useState<'source' | 'context'>('source');
   const [copied, setCopied] = useState<boolean>(false);
   const [scrollTop, setScrollTop] = useState<number>(0);
   const codeContainerRef = useRef<HTMLDivElement>(null);
@@ -36,7 +38,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
   const entity = selectedEntityId ? analysis.entities[selectedEntityId] : undefined;
   const fileRecord = entity ? analysis.files[entity.filePath] : undefined;
 
-  // Memoize splitting file lines to avoid O(L) re-splitting on every render
+  // Memoize splitting file lines
   const lines = useMemo(() => {
     if (fileRecord) {
       return fileRecord.content.split('\n');
@@ -46,16 +48,20 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
 
   const startLineOffset = fileRecord ? 1 : (entity?.location.startLine || 1);
 
-  // Virtualization calculations
+  // Determine current panel height
+  const panelHeight =
+    heightMode === 'collapsed' ? 38 : heightMode === 'compact' ? 220 : 420;
+  const viewportHeight = panelHeight - 38;
+
+  // Virtualization
   const totalHeight = lines.length * LINE_HEIGHT;
   const startIndex = Math.max(0, Math.floor(scrollTop / LINE_HEIGHT) - 15);
-  const endIndex = Math.min(lines.length, Math.ceil((scrollTop + VIEWPORT_HEIGHT) / LINE_HEIGHT) + 15);
+  const endIndex = Math.min(lines.length, Math.ceil((scrollTop + viewportHeight) / LINE_HEIGHT) + 15);
   const visibleLines = useMemo(() => {
     return lines.slice(startIndex, endIndex);
   }, [lines, startIndex, endIndex]);
   const offsetY = startIndex * LINE_HEIGHT;
 
-  // Handle scroll events with RAF throttling for responsive 60fps rendering
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
@@ -64,20 +70,23 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
   useEffect(() => {
     if (entity && codeContainerRef.current) {
       const targetLineIdx = Math.max(0, entity.location.startLine - startLineOffset);
-      const targetScrollTop = Math.max(0, targetLineIdx * LINE_HEIGHT - 80);
+      const targetScrollTop = Math.max(0, targetLineIdx * LINE_HEIGHT - 60);
       codeContainerRef.current.scrollTop = targetScrollTop;
       setScrollTop(targetScrollTop);
     }
   }, [entity, startLineOffset]);
 
-  // Compute execution context (callers and callees) memoized
+  // Compute callers and callees
   const executionContext = useMemo(() => {
     if (!entity) return { callers: [], callees: [] };
     const callers: { id: string; name: string; kind: string; file: string; line: number }[] = [];
     const callees: { id: string; name: string; kind: string; file: string; line: number }[] = [];
 
     for (const rel of analysis.relationships) {
-      if (rel.targetId === entity.id && (rel.kind === 'calls' || rel.kind === 'routes_to' || rel.kind === 'imports')) {
+      if (
+        rel.targetId === entity.id &&
+        (rel.kind === 'calls' || rel.kind === 'routes_to' || rel.kind === 'imports')
+      ) {
         const caller = analysis.entities[rel.sourceId];
         if (caller) {
           callers.push({
@@ -89,7 +98,10 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
           });
         }
       }
-      if (rel.sourceId === entity.id && (rel.kind === 'calls' || rel.kind === 'routes_to' || rel.kind === 'reads_from')) {
+      if (
+        rel.sourceId === entity.id &&
+        (rel.kind === 'calls' || rel.kind === 'routes_to' || rel.kind === 'reads_from')
+      ) {
         const callee = analysis.entities[rel.targetId];
         if (callee) {
           callees.push({
@@ -116,20 +128,25 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
     return null;
   }
 
+  const isCollapsed = heightMode === 'collapsed';
+
   return (
     <div
       style={{
-        height: isCollapsed ? 38 : 280,
+        height: panelHeight,
         background: 'var(--bg-secondary)',
         borderTop: '1px solid var(--border-color)',
         display: 'flex',
         flexDirection: 'column',
-        transition: 'height 0.18s ease',
+        transition: 'height 0.16s ease',
         zIndex: 30,
         boxShadow: 'var(--shadow-sm)',
+        flexShrink: 0,
       }}
+      role="region"
+      aria-label="Source code viewer"
     >
-      {/* Panel Top Navigation & Tab Bar */}
+      {/* Top Bar */}
       <div
         style={{
           height: 38,
@@ -138,46 +155,39 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 14px',
+          padding: '0 12px',
           minWidth: 0,
-          gap: 12,
+          gap: 10,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, overflow: 'hidden' }}>
-          {/* Tabs on a single row - responds immediately */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 4,
-              flexShrink: 0,
-              whiteSpace: 'nowrap',
-              overflowX: 'auto',
-            }}
-          >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
             <button
               className={`panel-tab ${activeTab === 'source' ? 'active' : ''}`}
-              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4, whiteSpace: 'nowrap' }}
-              onClick={() => { setActiveTab('source'); setIsCollapsed(false); }}
+              style={{ padding: '5px 10px', fontSize: 12, borderRadius: 4 }}
+              onClick={() => {
+                setActiveTab('source');
+                if (isCollapsed) setHeightMode('compact');
+              }}
+              aria-label="View source code"
             >
-              <Code2 size={13} style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> Source Code
+              <Code2 size={13} style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> Source
             </button>
             <button
               className={`panel-tab ${activeTab === 'context' ? 'active' : ''}`}
-              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4, whiteSpace: 'nowrap' }}
-              onClick={() => { setActiveTab('context'); setIsCollapsed(false); }}
+              style={{ padding: '5px 10px', fontSize: 12, borderRadius: 4 }}
+              onClick={() => {
+                setActiveTab('context');
+                if (isCollapsed) setHeightMode('compact');
+              }}
+              aria-label="View execution context"
             >
-              <Zap size={13} style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> Execution Context
-            </button>
-            <button
-              className={`panel-tab ${activeTab === 'ai' ? 'active' : ''}`}
-              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4, whiteSpace: 'nowrap' }}
-              onClick={() => { setActiveTab('ai'); setIsCollapsed(false); }}
-            >
-              <Sparkles size={13} color="var(--primary-blue)" style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> AI Explanation
+              <Zap size={13} style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> Context ({executionContext.callers.length + executionContext.callees.length})
             </button>
           </div>
 
-          <span style={{ color: 'var(--border-color)', flexShrink: 0 }}>|</span>
+          <span style={{ color: 'var(--border-color)', flexShrink: 0 }} aria-hidden="true">|</span>
 
           {/* Active File & Symbol Breadcrumb */}
           <div
@@ -212,7 +222,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                 flexShrink: 0,
               }}
             >
-              L{entity.location.startLine}-{entity.location.endLine}
+              L{entity.location.startLine}–{entity.location.endLine}
             </span>
             <span
               className={`kind-badge ${entity.kind}`}
@@ -223,32 +233,52 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
           </div>
         </div>
 
-        {/* Panel Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        {/* Panel Controls: Copy, Height toggles */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           <button
             onClick={handleCopyPath}
             className="tool-btn"
             style={{ fontSize: 11, padding: '3px 8px' }}
-            title="Copy file path and line location"
+            title="Copy path and start line (e.g. src/auth.ts:42)"
+            aria-label="Copy file reference"
           >
             {copied ? <Check size={12} color="var(--success-teal)" /> : <Copy size={12} />}
             <span>{copied ? 'Copied' : 'Copy Ref'}</span>
           </button>
 
+          {/* Expand / Minimize Toggle */}
           <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
+            onClick={() => {
+              if (heightMode === 'expanded') setHeightMode('compact');
+              else setHeightMode('expanded');
+            }}
+            className="tool-btn"
+            style={{ padding: '3px 6px' }}
+            title={heightMode === 'expanded' ? 'Compact panel' : 'Expand panel'}
+            aria-label={heightMode === 'expanded' ? 'Compact panel' : 'Expand panel'}
+          >
+            {heightMode === 'expanded' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+
+          {/* Collapse / Open Toggle */}
+          <button
+            onClick={() => {
+              if (heightMode === 'collapsed') setHeightMode('compact');
+              else setHeightMode('collapsed');
+            }}
             style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 4 }}
-            title={isCollapsed ? 'Expand panel' : 'Collapse panel'}
+            title={isCollapsed ? 'Open source panel' : 'Collapse source panel'}
+            aria-label={isCollapsed ? 'Open source panel' : 'Collapse source panel'}
           >
             {isCollapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
         </div>
       </div>
 
-      {/* Expanded Panel Body - Preserved across tabs to avoid unmounting latency */}
+      {/* Body */}
       {!isCollapsed && (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden', display: 'flex', position: 'relative' }}>
-          {/* TAB 1: SOURCE CODE VIEWER (VIRTUALIZED) */}
+          {/* TAB 1: VIRTUALIZED SOURCE CODE VIEWER */}
           <div
             style={{
               display: activeTab === 'source' ? 'flex' : 'none',
@@ -275,7 +305,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                 position: 'relative',
               }}
             >
-              <div style={{ height: Math.max(totalHeight, VIEWPORT_HEIGHT), width: '100%', position: 'relative' }}>
+              <div style={{ height: Math.max(totalHeight, viewportHeight), width: '100%', position: 'relative' }}>
                 <div style={{ transform: `translateY(${offsetY}px)`, willChange: 'transform' }}>
                   {visibleLines.map((lineContent, idx) => {
                     const lineNum = startLineOffset + startIndex + idx;
@@ -289,7 +319,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                         style={{
                           display: 'flex',
                           height: LINE_HEIGHT,
-                          background: isTargetLine ? 'rgba(37, 99, 235, 0.2)' : 'transparent',
+                          background: isTargetLine ? 'rgba(37, 99, 235, 0.22)' : 'transparent',
                           borderLeft: isTargetLine ? '3px solid var(--primary-blue)' : '3px solid transparent',
                           padding: '0 12px 0 6px',
                           boxSizing: 'border-box',
@@ -318,7 +348,7 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
             </div>
           </div>
 
-          {/* TAB 2: EXECUTION CONTEXT (PERSISTENT & CACHED) */}
+          {/* TAB 2: EXECUTION CONTEXT */}
           <div
             style={{
               display: activeTab === 'context' ? 'flex' : 'none',
@@ -331,61 +361,32 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
               flexDirection: 'column',
             }}
           >
-            <div style={{ maxWidth: 860, display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className={`kind-badge ${entity.kind}`}>{entity.kind}</span>
-                <strong style={{ fontSize: 16 }}>{entity.name}</strong>
-                {entity.isAsync && (
-                  <span className="kind-badge" style={{ background: 'var(--blue-selection-bg)', color: 'var(--primary-blue)' }}>
-                    Async
-                  </span>
-                )}
-                {entity.isExported && (
-                  <span className="kind-badge" style={{ background: 'var(--success-bg)', color: 'var(--success-teal)' }}>
-                    Exported
-                  </span>
-                )}
-              </div>
-
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                Declared in <code>{entity.filePath}</code> from line {entity.location.startLine} to {entity.location.endLine}.
-              </div>
-
-              {/* Parameter Signatures */}
-              {entity.parameters && entity.parameters.length > 0 && (
-                <div style={{ background: 'var(--bg-card)', padding: 12, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
-                    PARAMETER SIGNATURES
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {entity.parameters.map((p) => (
-                      <div key={p.name} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                        <span style={{ color: 'var(--warning-amber)' }}>{p.name}</span>: <span style={{ color: 'var(--primary-blue)' }}>{p.type || 'any'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Inbound & Outbound Execution Triggers */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ maxWidth: 900, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 {/* Inbound Callers */}
-                <div style={{ background: 'var(--bg-card)', padding: 12, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                <div
+                  style={{
+                    background: 'var(--bg-card)',
+                    padding: 12,
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-color)',
+                  }}
+                >
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>
                     Inbound Callers ({executionContext.callers.length})
                   </div>
                   {executionContext.callers.length === 0 ? (
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      No direct internal callers (may be entry point).
+                      No direct internal callers (may be public entry point).
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 120, overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
                       {executionContext.callers.map((c) => (
                         <div
                           key={`${c.id}-${c.line}`}
                           onClick={() => onSelectEntity(c.id)}
                           style={{
-                            padding: '4px 8px',
+                            padding: '5px 8px',
                             background: 'var(--bg-tertiary)',
                             borderRadius: 4,
                             cursor: 'pointer',
@@ -395,7 +396,10 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                             justifyContent: 'space-between',
                           }}
                         >
-                          <span style={{ fontWeight: 600 }}>{c.name}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className={`kind-badge ${c.kind}`}>{c.kind}</span>
+                            <strong style={{ color: 'var(--text-primary)' }}>{c.name}</strong>
+                          </div>
                           <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>L{c.line}</span>
                         </div>
                       ))}
@@ -404,7 +408,14 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                 </div>
 
                 {/* Outbound Calls */}
-                <div style={{ background: 'var(--bg-card)', padding: 12, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                <div
+                  style={{
+                    background: 'var(--bg-card)',
+                    padding: 12,
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-color)',
+                  }}
+                >
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>
                     Outbound Calls ({executionContext.callees.length})
                   </div>
@@ -413,13 +424,13 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                       No outbound calls invoked.
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 120, overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
                       {executionContext.callees.map((c) => (
                         <div
                           key={`${c.id}-${c.line}`}
                           onClick={() => onSelectEntity(c.id)}
                           style={{
-                            padding: '4px 8px',
+                            padding: '5px 8px',
                             background: 'var(--bg-tertiary)',
                             borderRadius: 4,
                             cursor: 'pointer',
@@ -429,52 +440,16 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
                             justifyContent: 'space-between',
                           }}
                         >
-                          <span style={{ fontWeight: 600 }}>{c.name}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className="kind-badge function">{c.kind}</span>
+                            <strong style={{ color: 'var(--text-primary)' }}>{c.name}</strong>
+                          </div>
                           <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>L{c.line}</span>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* TAB 3: AI EXPLANATION (PERSISTENT & GROUNDED) */}
-          <div
-            style={{
-              display: activeTab === 'ai' ? 'flex' : 'none',
-              flex: 1,
-              minHeight: 0,
-              minWidth: 0,
-              overflowY: 'auto',
-              background: 'var(--bg-primary)',
-              padding: 16,
-              flexDirection: 'column',
-            }}
-          >
-            <div style={{ maxWidth: 840, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--success-teal)' }}>
-                  ✓ Grounded Source Analysis for <code>{entity.name}</code>
-                </span>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  Deterministic AST Engine (Zero External Calls)
-                </span>
-              </div>
-
-              <div style={{ background: 'var(--bg-tertiary)', padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
-                <p>
-                  <strong>Component Role:</strong> <code>{entity.name}</code> is a {entity.isExported ? 'publicly exported ' : ''}<strong>{entity.kind}</strong> defined in <code>{entity.filePath}</code>.
-                </p>
-                {entity.docstring && (
-                  <blockquote style={{ borderLeft: '3px solid var(--primary-blue)', paddingLeft: 10, margin: '8px 0', color: 'var(--text-secondary)' }}>
-                    {entity.docstring}
-                  </blockquote>
-                )}
-                <p style={{ marginTop: 8 }}>
-                  <strong>AST Evidence:</strong> Declared at lines {entity.location.startLine}–{entity.location.endLine}. Statically verified {executionContext.callers.length} inbound caller(s) and {executionContext.callees.length} outbound call(s) across internal module dependencies.
-                </p>
               </div>
             </div>
           </div>
