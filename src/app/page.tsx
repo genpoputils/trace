@@ -52,6 +52,7 @@ export default function TraceHomePage() {
   const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'paths' | 'dataflow' | 'impact' | 'code' | 'ai' | 'settings'>('graph');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -225,37 +226,78 @@ export default function TraceHomePage() {
       {/* 2. MAIN APPLICATION WORKSPACE */}
       <div className="main-body">
         {/* LEFT SIDEBAR: Professional IDE Navigation */}
-        <aside className="left-sidebar">
-          <div className="nav-tabs">
+        <aside
+          className="left-sidebar"
+          style={{
+            width: sidebarCollapsed ? 52 : 260,
+            transition: 'width 0.18s ease',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+              padding: '8px 10px',
+              borderBottom: '1px solid var(--border-color)',
+            }}
+          >
+            {!sidebarCollapsed && (
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Navigation
+              </span>
+            )}
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="tool-btn"
+              style={{ padding: '3px 6px', fontSize: 11 }}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {sidebarCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} style={{ transform: 'rotate(90deg)' }} />}
+            </button>
+          </div>
+
+          <div className="nav-tabs" style={{ padding: sidebarCollapsed ? '6px 4px' : 6 }}>
             <button
               className={`nav-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
               onClick={() => setActiveTab('overview')}
+              title="Overview"
+              style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
-              <BarChart3 size={15} /> Overview
+              <BarChart3 size={15} /> {!sidebarCollapsed && 'Overview'}
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'paths' ? 'active' : ''}`}
               onClick={() => setActiveTab('paths')}
+              title="Trace Explorer"
+              style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
-              <Zap size={15} /> Trace Explorer
+              <Zap size={15} /> {!sidebarCollapsed && 'Trace Explorer'}
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'graph' ? 'active' : ''}`}
               onClick={() => setActiveTab('graph')}
+              title="Dependencies (Graph)"
+              style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
-              <Compass size={15} /> Dependencies (Graph)
+              <Compass size={15} /> {!sidebarCollapsed && 'Dependencies (Graph)'}
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'dataflow' ? 'active' : ''}`}
               onClick={() => setActiveTab('dataflow')}
+              title="Data Flow"
+              style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
-              <Waves size={15} /> Data Flow
+              <Waves size={15} /> {!sidebarCollapsed && 'Data Flow'}
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'impact' ? 'active' : ''}`}
               onClick={() => setActiveTab('impact')}
+              title="Impact Analysis"
+              style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
-              <ShieldAlert size={15} /> Impact Analysis
+              <ShieldAlert size={15} /> {!sidebarCollapsed && 'Impact Analysis'}
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'ai' ? 'active' : ''}`}
@@ -263,63 +305,69 @@ export default function TraceHomePage() {
                 setActiveTab('graph');
                 setInspectorOpen(true);
               }}
+              title="AI Insights"
+              style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
-              <Sparkles size={15} color="var(--primary-blue)" /> AI Insights
+              <Sparkles size={15} color="var(--primary-blue)" /> {!sidebarCollapsed && 'AI Insights'}
             </button>
           </div>
 
-          {/* Code Explorer Section Header */}
-          <div className="sidebar-section-header">
-            <span>Code Explorer</span>
-            {analysis && <span style={{ fontSize: 10 }}>{analysis.stats.totalFiles} files</span>}
-          </div>
-
-          {/* File Tree */}
-          <div className="sidebar-scroll-content">
-            {analysis && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {Object.keys(analysis.files).map((filePath) => {
-                  const symbolsInFile = Object.values(analysis.entities).filter(
-                    (e) => e.filePath === filePath && e.kind !== 'file'
-                  );
-                  const isFileActive = selectedEntityId && analysis.entities[selectedEntityId]?.filePath === filePath;
-
-                  return (
-                    <div
-                      key={filePath}
-                      onClick={() => {
-                        const target = symbolsInFile[0] || Object.values(analysis.entities).find((e) => e.filePath === filePath);
-                        if (target) handleEntitySelect(target.id);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '5px 8px',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: 12,
-                        cursor: 'pointer',
-                        background: isFileActive ? 'var(--blue-selection-bg)' : 'transparent',
-                        color: isFileActive ? 'var(--primary-blue)' : 'var(--text-secondary)',
-                        fontWeight: isFileActive ? 600 : 400,
-                      }}
-                      className="nav-tab-btn"
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-                        <FileCode size={13} color={isFileActive ? 'var(--primary-blue)' : 'var(--text-muted)'} />
-                        <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                          {filePath}
-                        </span>
-                      </div>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                        {symbolsInFile.length}
-                      </span>
-                    </div>
-                  );
-                })}
+          {!sidebarCollapsed && (
+            <>
+              {/* Code Explorer Section Header */}
+              <div className="sidebar-section-header">
+                <span>Code Explorer</span>
+                {analysis && <span style={{ fontSize: 10 }}>{analysis.stats.totalFiles} files</span>}
               </div>
-            )}
-          </div>
+
+              {/* File Tree */}
+              <div className="sidebar-scroll-content">
+                {analysis && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {Object.keys(analysis.files).map((filePath) => {
+                      const symbolsInFile = Object.values(analysis.entities).filter(
+                        (e) => e.filePath === filePath && e.kind !== 'file'
+                      );
+                      const isFileActive = selectedEntityId && analysis.entities[selectedEntityId]?.filePath === filePath;
+
+                      return (
+                        <div
+                          key={filePath}
+                          onClick={() => {
+                            const target = symbolsInFile[0] || Object.values(analysis.entities).find((e) => e.filePath === filePath);
+                            if (target) handleEntitySelect(target.id);
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '5px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            background: isFileActive ? 'var(--blue-selection-bg)' : 'transparent',
+                            color: isFileActive ? 'var(--primary-blue)' : 'var(--text-secondary)',
+                            fontWeight: isFileActive ? 600 : 400,
+                          }}
+                          className="nav-tab-btn"
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                            <FileCode size={13} color={isFileActive ? 'var(--primary-blue)' : 'var(--text-muted)'} />
+                            <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                              {filePath}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            {symbolsInFile.length}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </aside>
 
         {/* CENTER WORKSPACE */}
@@ -341,31 +389,45 @@ export default function TraceHomePage() {
             </div>
 
             {/* Contextual Toolbar Controls */}
-            {activeTab === 'graph' && (
-              <div className="toolbar-controls">
-                <button
-                  className={`tool-btn ${focusNeighborhood ? 'active' : ''}`}
-                  onClick={() => setFocusNeighborhood(!focusNeighborhood)}
-                  title="Focus view strictly on selected entity and its direct connections"
-                >
-                  <Eye size={13} /> {focusNeighborhood ? 'Focus Mode ON' : 'Focus Neighborhood'}
-                </button>
+            <div className="toolbar-controls">
+              {activeTab === 'graph' && (
+                <>
+                  <button
+                    className={`tool-btn ${focusNeighborhood ? 'active' : ''}`}
+                    onClick={() => setFocusNeighborhood(!focusNeighborhood)}
+                    title="Focus view strictly on selected entity and its direct connections"
+                  >
+                    <Eye size={13} /> {focusNeighborhood ? 'Focus ON' : 'Focus'}
+                  </button>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 6 }}>
-                  <Filter size={13} color="var(--text-muted)" />
-                  {(['route', 'component', 'hook', 'function', 'db_query'] as const).map((k) => (
-                    <button
-                      key={k}
-                      onClick={() => toggleKindFilter(k)}
-                      className={`tool-btn ${selectedFilterKinds.includes(k) ? 'active' : ''}`}
-                      style={{ fontSize: 11, padding: '2px 7px' }}
-                    >
-                      {k.replace('_', ' ')}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Filter size={13} color="var(--text-muted)" />
+                    {(['route', 'component', 'hook', 'function', 'db_query'] as const).map((k) => (
+                      <button
+                        key={k}
+                        onClick={() => toggleKindFilter(k)}
+                        className={`tool-btn ${selectedFilterKinds.includes(k) ? 'active' : ''}`}
+                        style={{ fontSize: 11, padding: '2px 7px' }}
+                      >
+                        {k.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Inspector Toggle */}
+              {analysis && (
+                <button
+                  className={`tool-btn ${inspectorOpen ? 'active' : ''}`}
+                  onClick={() => setInspectorOpen(!inspectorOpen)}
+                  title={inspectorOpen ? 'Hide Inspector Panel' : 'Show Inspector Panel'}
+                  style={{ marginLeft: 6 }}
+                >
+                  <Layers size={13} /> {inspectorOpen ? 'Inspector' : 'Open Inspector'}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Active Canvas / View */}

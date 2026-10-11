@@ -430,6 +430,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   position: relative;
   background: var(--bg-primary);
   overflow: hidden;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Workspace Toolbar */
@@ -442,6 +444,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   justify-content: space-between;
   padding: 0 14px;
   z-index: 10;
+  min-width: 0;
 }
 
 .toolbar-info {
@@ -450,12 +453,17 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   gap: 8px;
   font-size: 13px;
   color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar-controls {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .tool-btn {
@@ -487,7 +495,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 /* Right Inspector Panel */
 .right-panel {
-  width: 380px;
+  width: 320px;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border-color);
   display: flex;

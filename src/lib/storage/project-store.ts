@@ -44,6 +44,23 @@ class ProjectStore {
     this.projects.set(analysis.projectId, analysis);
   }
 
+  public findProjectByCommit(owner: string, repo: string, commitSha: string): ProjectAnalysis | null {
+    const o = owner.toLowerCase();
+    const r = repo.toLowerCase();
+    for (const project of this.projects.values()) {
+      if (
+        project.gitMetadata?.owner &&
+        project.gitMetadata?.repo &&
+        project.gitMetadata.owner.toLowerCase() === o &&
+        project.gitMetadata.repo.toLowerCase() === r &&
+        project.gitMetadata.commitSha === commitSha
+      ) {
+        return project;
+      }
+    }
+    return null;
+  }
+
   public listProjects(): { id: string; name: string; filesCount: number; symbolsCount: number; analyzedAt: string }[] {
     if (this.projects.size === 0) {
       this.seedDefaultProject();
@@ -64,6 +81,9 @@ class ProjectStore {
 
 // Global singleton instance across Next.js API calls in dev/prod
 const globalStore = global as unknown as { __projectStoreInstance?: ProjectStore };
+if (globalStore.__projectStoreInstance) {
+  Object.setPrototypeOf(globalStore.__projectStoreInstance, ProjectStore.prototype);
+}
 export const projectStore = globalStore.__projectStoreInstance || new ProjectStore();
 if (process.env.NODE_ENV !== 'production') {
   globalStore.__projectStoreInstance = projectStore;

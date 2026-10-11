@@ -73,6 +73,8 @@ export class TypeScriptAdapter {
     const warnings: AnalysisWarning[] = [];
     const unresolvedCalls: { name: string; location: SourceLocation; reason: string }[] = [];
     const localSymbols = new Map<string, LocalSymbolRef>();
+    const importsByLocalName = new Map<string, { sourceModule: string; importedName: string }>();
+    const nodeToEntity = new WeakMap<ts.Node, TraceEntity>();
 
     const lines = content.split('\n');
 
@@ -243,22 +245,26 @@ export class TypeScriptAdapter {
           if (importClause) {
             if (importClause.name) {
               // Default import
+              const localName = importClause.name.text;
               specifiers.push({
                 importedName: 'default',
-                localName: importClause.name.text,
+                localName,
                 isDefault: true,
                 isNamespace: false,
               });
+              importsByLocalName.set(localName, { sourceModule, importedName: 'default' });
             }
             if (importClause.namedBindings) {
               if (ts.isNamespaceImport(importClause.namedBindings)) {
                 // Namespace import * as foo
+                const localName = importClause.namedBindings.name.text;
                 specifiers.push({
                   importedName: '*',
-                  localName: importClause.namedBindings.name.text,
+                  localName,
                   isDefault: false,
                   isNamespace: true,
                 });
+                importsByLocalName.set(localName, { sourceModule, importedName: '*' });
               } else if (ts.isNamedImports(importClause.namedBindings)) {
                 for (const element of importClause.namedBindings.elements) {
                   const importedName = element.propertyName ? element.propertyName.text : element.name.text;
@@ -269,6 +275,7 @@ export class TypeScriptAdapter {
                     isDefault: false,
                     isNamespace: false,
                   });
+                  importsByLocalName.set(localName, { sourceModule, importedName });
                 }
               }
             }
@@ -300,7 +307,6 @@ export class TypeScriptAdapter {
         const returnType = node.type ? node.type.getText(sourceFile) : undefined;
         const docstring = getJSDoc(node);
 
-        // Next.js App Router route check: export async function GET / POST etc. in route.ts
         const isNextRoute =
           isExported &&
           (filePath.endsWith('/route.ts') || filePath.endsWith('/route.js') || filePath.endsWith('\\route.ts') || filePath.endsWith('\\route.js')) &&
@@ -343,9 +349,9 @@ export class TypeScriptAdapter {
         };
 
         entities.push(entity);
+        nodeToEntity.set(node, entity);
         localSymbols.set(name, { name, kind, entityId, isExported });
 
-        // Relationship: file defines function/component/hook
         relationships.push({
           id: `${fileEntity.id}->defines->${entity.id}`,
           sourceId: fileEntity.id,
@@ -407,6 +413,7 @@ export class TypeScriptAdapter {
               };
 
               entities.push(entity);
+              nodeToEntity.set(init, entity);
               localSymbols.set(varName, { name: varName, kind: 'function', entityId, isExported });
 
               relationships.push({
@@ -448,6 +455,7 @@ export class TypeScriptAdapter {
         const docstring = getJSDoc(node);
 
         const entityId = `${filePath}#class#${className}#${loc.startLine}`;
+
         const classEntity: TraceEntity = {
           id: entityId,
           name: className,
@@ -460,6 +468,7 @@ export class TypeScriptAdapter {
         };
 
         entities.push(classEntity);
+        nodeToEntity.set(node, classEntity);
         localSymbols.set(className, { name: className, kind: 'class', entityId, isExported });
 
         relationships.push({
@@ -507,6 +516,7 @@ export class TypeScriptAdapter {
             };
 
             entities.push(methodEntity);
+            nodeToEntity.set(member, methodEntity);
             localSymbols.set(`${className}.${methodName}`, {
               name: `${className}.${methodName}`,
               kind: 'method',
@@ -561,6 +571,7 @@ export class TypeScriptAdapter {
       const route = detectRoute(node);
       if (route) {
         entities.push(route);
+        nodeToEntity.set(node, route);
         relationships.push({
           id: `${fileEntity.id}->defines->${route.id}`,
           sourceId: fileEntity.id,
@@ -576,44 +587,31 @@ export class TypeScriptAdapter {
 
     visitDeclarations(sourceFile);
 
-    // Pass 2: Detect Calls, DB operations, Environment variables, and Data Flow within scopes
-    let currentScopeEntity: TraceEntity = fileEntity;
-
-    const findEnclosingEntity = (node: ts.Node): TraceEntity => {
-      let curr: ts.Node | undefined = node.parent;
-      while (curr) {
-        if (ts.isFunctionDeclaration(curr) && curr.name) {
-          const found = entities.find((e) => e.location.startLine === getLocation(curr!).startLine);
-          if (found) return found;
-        }
-        if (ts.isMethodDeclaration(curr)) {
-          const found = entities.find((e) => e.location.startLine === getLocation(curr!).startLine);
-          if (found) return found;
-        }
-        if (ts.isArrowFunction(curr) || ts.isFunctionExpression(curr)) {
-          const parent = curr.parent;
-          if (parent && ts.isVariableDeclaration(parent)) {
-            const found = entities.find((e) => e.location.startLine === getLocation(parent).startLine);
-            if (found) return found;
-          }
-        }
-        if (ts.isCallExpression(curr)) {
-          // If inside a route handler e.g. app.get('/...', (req, res) => { ... })
-          const route = entities.find((e) => e.kind === 'route' && e.location.startLine === getLocation(curr!).startLine);
-          if (route) return route;
-        }
-        curr = curr.parent;
-      }
-      return fileEntity;
-    };
+    // Pass 2: Detect Calls, DB operations, Environment variables using O(1) scope tracking
+    const scopeStack: TraceEntity[] = [fileEntity];
+    let currentClass: TraceEntity | null = null;
 
     const visitCallsAndReferences = (node: ts.Node) => {
+      let pushedScope = false;
+      const prevClass = currentClass;
+
+      const entityForNode = nodeToEntity.get(node);
+      if (entityForNode) {
+        if (entityForNode.kind === 'class') {
+          currentClass = entityForNode;
+        } else {
+          scopeStack.push(entityForNode);
+          pushedScope = true;
+        }
+      }
+
+      const caller = scopeStack[scopeStack.length - 1] || fileEntity;
+
       // Detect DB queries
       if (ts.isCallExpression(node)) {
         const dbQuery = detectDbOperation(node);
         if (dbQuery) {
           entities.push(dbQuery);
-          const caller = findEnclosingEntity(node);
           relationships.push({
             id: `${caller.id}->calls->${dbQuery.id}#${dbQuery.location.startLine}`,
             sourceId: caller.id,
@@ -629,7 +627,6 @@ export class TypeScriptAdapter {
 
       // Detect function calls
       if (ts.isCallExpression(node)) {
-        const caller = findEnclosingEntity(node);
         const expr = node.expression;
         const callLoc = getLocation(node);
         const callSnippet = getSnippet(node, 3);
@@ -651,18 +648,14 @@ export class TypeScriptAdapter {
               notes: `Direct local call to ${calleeName}`,
             });
           } else {
-            // Check if imported from another module
-            const imp = imports.find((i) =>
-              i.specifiers.some((s) => s.localName === calleeName)
-            );
+            // Check if imported from another module via O(1) map
+            const imp = importsByLocalName.get(calleeName);
 
             if (imp) {
-              const spec = imp.specifiers.find((s) => s.localName === calleeName);
-              // Target will be resolved across modules in cross-module linker
               relationships.push({
-                id: `${caller.id}->calls->import:${imp.sourceModule}:${spec?.importedName}#${callLoc.startLine}`,
+                id: `${caller.id}->calls->import:${imp.sourceModule}:${imp.importedName}#${callLoc.startLine}`,
                 sourceId: caller.id,
-                targetId: `__import__:${imp.sourceModule}:${spec?.importedName || calleeName}`,
+                targetId: `__import__:${imp.sourceModule}:${imp.importedName || calleeName}`,
                 kind: 'calls',
                 confidence: 'statically_resolved',
                 location: callLoc,
@@ -670,7 +663,6 @@ export class TypeScriptAdapter {
                 notes: `Call to imported function ${calleeName} from ${imp.sourceModule}`,
               });
             } else if (!['console', 'setTimeout', 'setInterval', 'require', 'parseInt', 'parseFloat', 'String', 'Number', 'Boolean', 'Promise', 'Array', 'Object', 'Error'].includes(calleeName)) {
-              // Could be an unresolved dynamic call or global
               unresolvedCalls.push({
                 name: calleeName,
                 location: callLoc,
@@ -685,10 +677,7 @@ export class TypeScriptAdapter {
           const objExpr = expr.expression;
           const objName = objExpr.getText(sourceFile);
 
-          // Check if object is a known imported service or local class instance
-          const imp = imports.find((i) =>
-            i.specifiers.some((s) => s.localName === objName)
-          );
+          const imp = importsByLocalName.get(objName);
 
           if (imp) {
             relationships.push({
@@ -702,7 +691,6 @@ export class TypeScriptAdapter {
               notes: `Method call on imported object ${objName}.${methodName}`,
             });
           } else {
-            // Check local symbol
             const localClassMethod = localSymbols.get(`${objName}.${methodName}`);
             if (localClassMethod) {
               relationships.push({
@@ -715,26 +703,21 @@ export class TypeScriptAdapter {
                 evidenceSnippet: callSnippet,
                 notes: `Local method call ${objName}.${methodName}`,
               });
-            } else if (objName === 'this') {
-              // Call to this.someMethod
-              const enclosingClass = entities.find((e) => e.kind === 'class' && e.location.startLine <= callLoc.startLine && e.location.endLine >= callLoc.endLine);
-              if (enclosingClass) {
-                const targetMethod = entities.find((e) => e.kind === 'method' && e.name === `${enclosingClass.name}.${methodName}`);
-                if (targetMethod) {
-                  relationships.push({
-                    id: `${caller.id}->calls->${targetMethod.id}#${callLoc.startLine}`,
-                    sourceId: caller.id,
-                    targetId: targetMethod.id,
-                    kind: 'calls',
-                    confidence: 'statically_resolved',
-                    location: callLoc,
-                    evidenceSnippet: callSnippet,
-                    notes: `Call to this.${methodName}`,
-                  });
-                }
+            } else if (objName === 'this' && currentClass) {
+              const targetMethod = localSymbols.get(`${currentClass.name}.${methodName}`);
+              if (targetMethod) {
+                relationships.push({
+                  id: `${caller.id}->calls->${targetMethod.entityId}#${callLoc.startLine}`,
+                  sourceId: caller.id,
+                  targetId: targetMethod.entityId,
+                  kind: 'calls',
+                  confidence: 'statically_resolved',
+                  location: callLoc,
+                  evidenceSnippet: callSnippet,
+                  notes: `Call to this.${methodName}`,
+                });
               }
             } else if (!['log', 'error', 'warn', 'info', 'map', 'filter', 'forEach', 'reduce', 'push', 'slice', 'join', 'split', 'trim', 'then', 'catch', 'json', 'status', 'send'].includes(methodName)) {
-              // Inferred method call
               relationships.push({
                 id: `${caller.id}->calls->inferred:${objName}.${methodName}#${callLoc.startLine}`,
                 sourceId: caller.id,
@@ -772,7 +755,6 @@ export class TypeScriptAdapter {
           const prop = node.expression.name.text;
           if (obj === 'process' && prop === 'env') {
             const envVarName = node.name.text;
-            const caller = findEnclosingEntity(node);
             const envLoc = getLocation(node);
             const envEntityId = `${filePath}#variable#process.env.${envVarName}#${envLoc.startLine}`;
 
@@ -801,6 +783,11 @@ export class TypeScriptAdapter {
       }
 
       ts.forEachChild(node, visitCallsAndReferences);
+
+      if (pushedScope) {
+        scopeStack.pop();
+      }
+      currentClass = prevClass;
     };
 
     visitCallsAndReferences(sourceFile);

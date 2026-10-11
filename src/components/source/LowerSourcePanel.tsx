@@ -81,52 +81,92 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 14px',
+          minWidth: 0,
+          gap: 12,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, overflow: 'hidden' }}>
+          {/* Tabs on a single row */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 4,
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
+              overflowX: 'auto',
+            }}
+          >
             <button
               className={`panel-tab ${activeTab === 'source' ? 'active' : ''}`}
-              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4 }}
+              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4, whiteSpace: 'nowrap' }}
               onClick={() => { setActiveTab('source'); setIsCollapsed(false); }}
             >
               <Code2 size={13} style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> Source Code
             </button>
             <button
               className={`panel-tab ${activeTab === 'context' ? 'active' : ''}`}
-              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4 }}
+              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4, whiteSpace: 'nowrap' }}
               onClick={() => { setActiveTab('context'); setIsCollapsed(false); }}
             >
               <Zap size={13} style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> Execution Context
             </button>
             <button
               className={`panel-tab ${activeTab === 'ai' ? 'active' : ''}`}
-              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4 }}
+              style={{ padding: '6px 12px', fontSize: 12, borderRadius: 4, whiteSpace: 'nowrap' }}
               onClick={() => { setActiveTab('ai'); setIsCollapsed(false); }}
             >
               <Sparkles size={13} color="var(--primary-blue)" style={{ marginRight: 4, display: 'inline', verticalAlign: 'text-top' }} /> AI Explanation
             </button>
           </div>
 
-          <span style={{ color: 'var(--border-color)' }}>|</span>
+          <span style={{ color: 'var(--border-color)', flexShrink: 0 }}>|</span>
 
           {/* Active File & Symbol Breadcrumb */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
-            <FileCode size={13} color="var(--text-muted)" />
-            <strong style={{ color: 'var(--text-primary)' }}>{entity.filePath}</strong>
-            <span>:</span>
-            <span style={{ color: 'var(--primary-blue)', fontFamily: 'var(--font-mono)' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              minWidth: 0,
+              overflow: 'hidden',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <FileCode size={13} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+            <strong
+              style={{
+                color: 'var(--text-primary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={entity.filePath}
+            >
+              {entity.filePath}
+            </strong>
+            <span style={{ flexShrink: 0 }}>:</span>
+            <span
+              style={{
+                color: 'var(--primary-blue)',
+                fontFamily: 'var(--font-mono)',
+                flexShrink: 0,
+              }}
+            >
               L{entity.location.startLine}-{entity.location.endLine}
             </span>
-            <span className={`kind-badge ${entity.kind}`} style={{ fontSize: 9, padding: '1px 5px' }}>
+            <span
+              className={`kind-badge ${entity.kind}`}
+              style={{ fontSize: 9, padding: '1px 5px', flexShrink: 0 }}
+            >
               {entity.name}
             </span>
           </div>
         </div>
 
         {/* Panel Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <button
             onClick={handleCopyPath}
             className="tool-btn"
@@ -149,14 +189,17 @@ export const LowerSourcePanel: React.FC<LowerSourcePanelProps> = ({
 
       {/* Expanded Panel Body */}
       {!isCollapsed && (
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden', display: 'flex' }}>
           {/* TAB 1: SOURCE CODE VIEWER */}
           {activeTab === 'source' && (
             <div
               ref={codeContainerRef}
               style={{
                 flex: 1,
+                minHeight: 0,
+                minWidth: 0,
                 overflowY: 'auto',
+                overflowX: 'auto',
                 background: 'var(--code-bg)',
                 fontFamily: 'var(--font-mono)',
                 fontSize: 12,

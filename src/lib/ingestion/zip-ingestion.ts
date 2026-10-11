@@ -29,6 +29,35 @@ const DEFAULT_EXCLUDED_DIRS = [
   'vendor',
   '.venv',
   '__pycache__',
+  '__tests__',
+  'tests',
+  'test',
+  'e2e',
+  'spec',
+  'specs',
+  'cypress',
+  'fixtures',
+  'mocks',
+  '__mocks__',
+  'android',
+  'ios',
+  'fastlane',
+  'locales',
+  'i18n',
+  'translations',
+  'docs',
+  'documentation',
+  'assets',
+  'static',
+  'public',
+  '.github',
+  '.vscode',
+  '.idea',
+  'generated',
+  'gen',
+  'openapi',
+  'proto',
+  'swagger',
 ];
 
 const DEFAULT_EXCLUDED_EXTS = [
@@ -37,7 +66,8 @@ const DEFAULT_EXCLUDED_EXTS = [
   '.zip', '.tar', '.gz', '.7z', '.rar',
   '.pdf', '.mp4', '.mp3', '.mov',
   '.exe', '.dll', '.so', '.dylib', '.wasm',
-  '.lock',
+  '.lock', '.map', '.snap', '.min.js', '.min.css', '.bundle.js',
+  '.md', '.txt', '.csv', '.tsv', '.dart', '.kt', '.swift',
 ];
 
 export class ZipIngestionService {
@@ -49,9 +79,9 @@ export class ZipIngestionService {
     originalFilename = 'project.zip',
     options: IngestionOptions = {}
   ): Promise<IngestionResult> {
-    const maxTotalSize = options.maxTotalSize || 50 * 1024 * 1024; // 50MB
-    const maxFileSize = options.maxFileSize || 5 * 1024 * 1024;   // 5MB
-    const maxFileCount = options.maxFileCount || 3000;
+    const maxTotalSize = options.maxTotalSize || 40 * 1024 * 1024; // 40MB
+    const maxFileSize = options.maxFileSize || 2 * 1024 * 1024;   // 2MB (prevents minified bundle parse hangs)
+    const maxFileCount = options.maxFileCount || 1500;
 
     const zip = await JSZip.loadAsync(buffer);
     const files: Record<string, FileRecord> = {};
@@ -96,20 +126,33 @@ export class ZipIngestionService {
       const pathSegments = normalizedPath.split('/');
       const isExcludedDir = pathSegments.some((seg) => DEFAULT_EXCLUDED_DIRS.includes(seg.toLowerCase()));
       if (isExcludedDir) {
-        skippedFiles.push({ path: normalizedPath, reason: 'Excluded build or dependency directory' });
+        skippedFiles.push({ path: normalizedPath, reason: 'Excluded build or dependency directory (test, build, or generated)' });
         continue;
       }
 
       // Check excluded file extension
       const ext = path.extname(normalizedPath).toLowerCase();
-      if (DEFAULT_EXCLUDED_EXTS.includes(ext) || normalizedPath.endsWith('package-lock.json') || normalizedPath.endsWith('yarn.lock')) {
-        skippedFiles.push({ path: normalizedPath, reason: 'Non-source or lockfile binary extension' });
+      const lowerPath = normalizedPath.toLowerCase();
+
+      // Skip test/spec/e2e files, declaration files, and lockfiles
+      if (
+        DEFAULT_EXCLUDED_EXTS.includes(ext) ||
+        normalizedPath.endsWith('.d.ts') ||
+        lowerPath.includes('.spec.') ||
+        lowerPath.includes('.test.') ||
+        lowerPath.includes('.e2e-spec.') ||
+        lowerPath.includes('.mock.') ||
+        normalizedPath.endsWith('package-lock.json') ||
+        normalizedPath.endsWith('yarn.lock') ||
+        normalizedPath.endsWith('pnpm-lock.yaml')
+      ) {
+        skippedFiles.push({ path: normalizedPath, reason: 'Non-source, test spec, declaration, or lockfile asset' });
         continue;
       }
 
       // Decompression bomb check: total file count
       if (++fileCount > maxFileCount) {
-        warnings.push(`File count exceeded maximum limit (${maxFileCount}). Additional files were skipped.`);
+        warnings.push(`File count reached maximum limit (${maxFileCount}). Remaining secondary files were skipped.`);
         break;
       }
 

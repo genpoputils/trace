@@ -9,6 +9,11 @@ import {
 } from '../types/trace';
 import { TypeScriptAdapter, FileAnalysisOutput } from './typescript-adapter';
 
+export type AnalyzerProgressCallback = (
+  stage: string,
+  progress: { current: number; total: number; message: string }
+) => void;
+
 export class CodebaseAnalyzer {
   private tsAdapter: TypeScriptAdapter;
 
@@ -21,18 +26,43 @@ export class CodebaseAnalyzer {
    */
   public analyzeProject(
     projectName: string,
-    files: Record<string, FileRecord>
+    files: Record<string, FileRecord>,
+    onProgress?: AnalyzerProgressCallback
   ): ProjectAnalysis {
     const allEntities: Record<string, TraceEntity> = {};
+    const entitiesByName = new Map<string, TraceEntity[]>();
     const allRelationships: TraceRelationship[] = [];
     const allWarnings: AnalysisWarning[] = [];
     const fileOutputs: Record<string, FileAnalysisOutput> = {};
     const languagesSet = new Set<string>();
 
+    const registerEntity = (entity: TraceEntity) => {
+      allEntities[entity.id] = entity;
+      const existing = entitiesByName.get(entity.name);
+      if (existing) {
+        existing.push(entity);
+      } else {
+        entitiesByName.set(entity.name, [entity]);
+      }
+    };
+
     let unresolvedCount = 0;
 
+    const fileEntries = Object.entries(files);
+    const totalFiles = fileEntries.length;
+    let processedFiles = 0;
+
     // Phase 1: Per-file AST parsing
-    for (const [filePath, fileRecord] of Object.entries(files)) {
+    for (const [filePath, fileRecord] of fileEntries) {
+      processedFiles++;
+      if (processedFiles % 25 === 0 || processedFiles === totalFiles) {
+        onProgress?.('parsing', {
+          current: processedFiles,
+          total: totalFiles,
+          message: `Parsed AST for ${processedFiles} / ${totalFiles} files...`,
+        });
+      }
+
       if (this.tsAdapter.supports(filePath)) {
         languagesSet.add(fileRecord.language);
         try {
@@ -40,11 +70,11 @@ export class CodebaseAnalyzer {
           fileOutputs[filePath] = output;
 
           // Register file entity
-          allEntities[output.fileEntity.id] = output.fileEntity;
+          registerEntity(output.fileEntity);
 
           // Register child entities
           for (const ent of output.entities) {
-            allEntities[ent.id] = ent;
+            registerEntity(ent);
           }
 
           // Register intra-file relationships
@@ -83,11 +113,17 @@ export class CodebaseAnalyzer {
           isExported: false,
           snippet: lines.slice(0, 10).join('\n'),
         };
-        allEntities[fileEnt.id] = fileEnt;
+        registerEntity(fileEnt);
       }
     }
 
     // Phase 2: Cross-Module Import Resolution
+    onProgress?.('resolving', {
+      current: 0,
+      total: allRelationships.length,
+      message: `Resolving dependencies across ${allRelationships.length} relationships...`,
+    });
+
     const resolvedRelationships: TraceRelationship[] = [];
 
     for (const rel of allRelationships) {
@@ -121,7 +157,7 @@ export class CodebaseAnalyzer {
           if (!sourceModule.startsWith('.')) {
             const extId = `external#${sourceModule}#${symbolName}`;
             if (!allEntities[extId]) {
-              allEntities[extId] = {
+              const extEntity: TraceEntity = {
                 id: extId,
                 name: `${sourceModule}.${symbolName}`,
                 kind: 'external_api',
@@ -130,6 +166,7 @@ export class CodebaseAnalyzer {
                 isExported: true,
                 metadata: { package: sourceModule },
               };
+              registerEntity(extEntity);
             }
             resolvedRelationships.push({
               ...rel,
@@ -149,8 +186,9 @@ export class CodebaseAnalyzer {
         }
       } else if (rel.targetId.startsWith('__inferred__:')) {
         const symbolExpr = rel.targetId.replace('__inferred__:', '');
-        // Search if any entity matches this symbolExpr
-        const matched = Object.values(allEntities).find((e) => e.name === symbolExpr);
+        // Search if any entity matches this symbolExpr using O(1) map
+        const matches = entitiesByName.get(symbolExpr);
+        const matched = matches && matches.length > 0 ? matches[0] : undefined;
         if (matched) {
           resolvedRelationships.push({
             ...rel,
@@ -173,14 +211,22 @@ export class CodebaseAnalyzer {
     }
 
     // Phase 3: Route-to-Handler Linkage
-    // Link route entities to the function/handler they invoke
+    // Pre-index calls by sourceId to avoid O(R * N) quadratic loop
+    const callsBySourceId = new Map<string, TraceRelationship[]>();
+    for (const r of resolvedRelationships) {
+      if (r.kind === 'calls') {
+        const list = callsBySourceId.get(r.sourceId);
+        if (list) {
+          list.push(r);
+        } else {
+          callsBySourceId.set(r.sourceId, [r]);
+        }
+      }
+    }
+
     for (const entity of Object.values(allEntities)) {
       if (entity.kind === 'route') {
-        // Look for calls made from within this route
-        const routeCalls = resolvedRelationships.filter(
-          (r) => r.sourceId === entity.id && r.kind === 'calls'
-        );
-
+        const routeCalls = callsBySourceId.get(entity.id) || [];
         for (const call of routeCalls) {
           if (allEntities[call.targetId]) {
             resolvedRelationships.push({
@@ -198,6 +244,11 @@ export class CodebaseAnalyzer {
     }
 
     // Phase 4: Calculate connectivity & Centrality Metrics
+    onProgress?.('preparing', {
+      current: 1,
+      total: 1,
+      message: 'Preparing graph centrality and metrics...',
+    });
     const inboundCounts: Record<string, number> = {};
     const outboundCounts: Record<string, number> = {};
 

@@ -50,7 +50,22 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   const [loadingBranches, setLoadingBranches] = useState<boolean>(false);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
+  const [currentJob, setCurrentJob] = useState<{
+    id: string;
+    stage: string;
+    progress: { current: number; total: number; message: string };
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const mouseDownOnOverlayRef = React.useRef(false);
+  const activePollRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (activePollRef.current) clearInterval(activePollRef.current);
+    };
+  }, []);
 
   // Fetch status on open
   useEffect(() => {
@@ -85,7 +100,7 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
       } else {
         setError(data.error || 'Failed to fetch repositories.');
       }
-    } catch (err) {
+    } catch {
       setError('Network error fetching GitHub repositories.');
     } finally {
       setLoadingRepos(false);
@@ -123,10 +138,10 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   const handleStartAnalysis = async (owner: string, repo: string, branch: string) => {
     setAnalyzing(true);
     setError(null);
+    setCurrentJob(null);
     setAnalysisStatus(`Connecting to GitHub API for ${owner}/${repo}@${branch}...`);
 
     try {
-      setAnalysisStatus('Downloading repository source zipball and resolving commit SHA...');
       const res = await fetch('/api/github/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,15 +156,63 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Repository analysis failed');
+        throw new Error(data.error || 'Repository analysis request failed');
       }
 
-      setAnalysisStatus(`Analysis complete! Commit ${data.shortSha} indexed.`);
-      onProjectLoaded(data.projectId);
-      onClose();
+      // If results were instantly returned from cache
+      if (data.cached && data.projectId) {
+        setAnalysisStatus(`Loaded cached analysis for commit ${data.shortSha || ''}!`);
+        onProjectLoaded(data.projectId);
+        onClose();
+        return;
+      }
+
+      // Start background polling for real progress
+      const jobId = data.jobId;
+      if (!jobId) {
+        throw new Error('Server did not return a valid job ID');
+      }
+
+      setAnalysisStatus('Job enqueued. Downloading source archive...');
+
+      if (activePollRef.current) clearInterval(activePollRef.current);
+
+      activePollRef.current = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`/api/jobs/${jobId}`);
+          const pollData = await pollRes.json();
+
+          if (!pollRes.ok || !pollData.job) {
+            if (activePollRef.current) clearInterval(activePollRef.current);
+            setError(pollData.error || 'Failed to poll job status');
+            setAnalyzing(false);
+            return;
+          }
+
+          const job = pollData.job;
+          setCurrentJob(job);
+          if (job.progress?.message) {
+            setAnalysisStatus(job.progress.message);
+          }
+
+          if (job.stage === 'completed') {
+            if (activePollRef.current) clearInterval(activePollRef.current);
+            setAnalyzing(false);
+            onProjectLoaded(job.projectId);
+            onClose();
+          } else if (job.stage === 'failed') {
+            if (activePollRef.current) clearInterval(activePollRef.current);
+            setAnalyzing(false);
+            setError(job.error || 'Repository analysis failed');
+          }
+        } catch (pollErr) {
+          if (activePollRef.current) clearInterval(activePollRef.current);
+          setAnalyzing(false);
+          setError(pollErr instanceof Error ? pollErr.message : 'Error checking job status');
+        }
+      }, 700);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
-    } finally {
       setAnalyzing(false);
     }
   };
@@ -157,7 +220,20 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div
+      className="modal-overlay"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          mouseDownOnOverlayRef.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && mouseDownOnOverlayRef.current) {
+          onClose();
+        }
+        mouseDownOnOverlayRef.current = false;
+      }}
+    >
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 650 }}>
         {/* Header */}
         <div className="modal-header">
@@ -484,6 +560,65 @@ GITHUB_CLIENT_SECRET=your_client_secret_here`}
 
               <div style={{ padding: 12, background: 'var(--blue-selection-bg)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--primary-blue)' }}>
                 <strong>No OAuth setup needed for local inspection:</strong> You can also paste a GitHub Personal Access Token (PAT) with <code>repo</code> scope directly into the field above to analyze private repositories without configuring an OAuth application.
+              </div>
+            </div>
+          )}
+
+          {/* Real-Time Live Analysis Progress Card */}
+          {analyzing && (
+            <div
+              style={{
+                padding: 14,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-sm)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <RefreshCw size={14} className="animate-spin" color="var(--primary-blue)" />
+                  <strong style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+                    {currentJob?.stage ? currentJob.stage.toUpperCase() : 'PROCESSING'}
+                  </strong>
+                </div>
+                {currentJob?.progress?.total ? (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    {currentJob.progress.current} / {currentJob.progress.total}
+                  </span>
+                ) : null}
+              </div>
+
+              {/* Progress bar */}
+              {currentJob?.progress?.total && currentJob.progress.total > 0 ? (
+                <div
+                  style={{
+                    height: 6,
+                    width: '100%',
+                    background: 'var(--border-color)',
+                    borderRadius: 3,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.min(100, Math.max(5, Math.round((currentJob.progress.current / currentJob.progress.total) * 100)))}%`,
+                      background: 'var(--primary-blue)',
+                      transition: 'width 0.25s ease-out',
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                {analysisStatus}
+              </div>
+
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Analysis executes on the server background worker. You can safely keep this open or close it.
               </div>
             </div>
           )}

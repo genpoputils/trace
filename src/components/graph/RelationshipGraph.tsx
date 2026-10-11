@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -14,6 +14,8 @@ import {
   MarkerType,
   Handle,
   Position,
+  useReactFlow,
+  ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
@@ -42,6 +44,9 @@ interface RelationshipGraphProps {
 // Custom Node Card Component
 function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) {
   const entity: TraceEntity = data.entity;
+  const onExpand = data.onExpand;
+  const neighborCount = data.neighborCount || 0;
+  const isExpanded = data.isExpanded || false;
 
   const getIcon = () => {
     switch (entity.kind) {
@@ -69,7 +74,11 @@ function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) 
 
   return (
     <div className={`trace-node ${selected ? 'selected' : ''}`}>
-      <Handle type="target" position={Position.Left} style={{ background: 'var(--primary-blue)', border: '2px solid #FFFFFF' }} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ background: 'var(--primary-blue)', border: '2px solid #FFFFFF' }}
+      />
       <div className="trace-node-header">
         <span className={`kind-badge ${entity.kind}`}>{entity.kind}</span>
         {getIcon()}
@@ -80,11 +89,38 @@ function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) 
       <div className="trace-node-file" title={entity.filePath}>
         <Code2 size={11} /> {entity.filePath.split('/').slice(-2).join('/')}
       </div>
-      <div className="trace-node-footer">
+      <div
+        className="trace-node-footer"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      >
         <span>Line {entity.location.startLine}</span>
-        {entity.isExported && <span style={{ color: 'var(--primary-blue)', fontWeight: 600 }}>Exported</span>}
+        {neighborCount > 0 && onExpand && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onExpand(entity.id);
+            }}
+            style={{
+              background: isExpanded ? 'var(--blue-selection-bg)' : 'var(--bg-tertiary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 3,
+              fontSize: 10,
+              padding: '1px 5px',
+              cursor: 'pointer',
+              color: isExpanded ? 'var(--primary-blue)' : 'var(--text-secondary)',
+              fontWeight: 500,
+            }}
+            title={isExpanded ? 'Collapse connections' : 'Expand direct connections'}
+          >
+            {isExpanded ? '− Collapse' : `+ Expand (${neighborCount})`}
+          </button>
+        )}
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: 'var(--primary-blue)', border: '2px solid #FFFFFF' }} />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{ background: 'var(--primary-blue)', border: '2px solid #FFFFFF' }}
+      />
     </div>
   );
 }
@@ -100,8 +136,8 @@ function getLayoutedElements(nodes: Node[], edges: Edge[], direction = 'LR') {
 
   dagreGraph.setGraph({
     rankdir: direction,
-    nodesep: 40,
-    ranksep: 90,
+    nodesep: 45,
+    ranksep: 95,
   });
 
   nodes.forEach((node) => {
@@ -128,94 +164,194 @@ function getLayoutedElements(nodes: Node[], edges: Edge[], direction = 'LR') {
   return { nodes: layoutedNodes, edges };
 }
 
-export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
+function RelationshipGraphContent({
   analysis,
   selectedEntityId,
   onSelectEntity,
   filterKinds,
   focusEntityId,
-}) => {
-  // Filter nodes & edges
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
-    let candidateEntities = Object.values(analysis.entities);
+}: RelationshipGraphProps) {
+  const { fitView } = useReactFlow();
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
+  const lastTopologyKeyRef = useRef<string>('');
 
-    // If focus mode enabled, only show neighborhood (target + immediate callers/callees)
+  // Reset expanded nodes when switching projects
+  useEffect(() => {
+    setExpandedNodeIds(new Set());
+    lastTopologyKeyRef.current = '';
+  }, [analysis.projectId]);
+
+  const toggleExpandNode = useCallback((entityId: string) => {
+    setExpandedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entityId)) {
+        next.delete(entityId);
+      } else {
+        next.add(entityId);
+      }
+      return next;
+    });
+  }, []);
+
+  // Compute degree connectivity for all entities
+  const neighborCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const rel of analysis.relationships) {
+      counts.set(rel.sourceId, (counts.get(rel.sourceId) || 0) + 1);
+      counts.set(rel.targetId, (counts.get(rel.targetId) || 0) + 1);
+    }
+    return counts;
+  }, [analysis.relationships]);
+
+  // Build topology and calculate Dagre layout WITHOUT selectedEntityId
+  const { layoutedNodes, layoutedEdges, topologyKey } = useMemo(() => {
+    let candidateEntities: TraceEntity[] = [];
+
     if (focusEntityId && analysis.entities[focusEntityId]) {
+      // Focus mode: target entity + immediate 1st-degree callers/callees
       const neighborIds = new Set<string>();
       neighborIds.add(focusEntityId);
-
       for (const rel of analysis.relationships) {
         if (rel.sourceId === focusEntityId) neighborIds.add(rel.targetId);
         if (rel.targetId === focusEntityId) neighborIds.add(rel.sourceId);
       }
-
-      candidateEntities = candidateEntities.filter((e) => neighborIds.has(e.id));
+      candidateEntities = Object.values(analysis.entities).filter((e) => neighborIds.has(e.id));
     } else {
-      // Exclude file nodes by default to reduce clutter unless explicitly filtered
-      candidateEntities = candidateEntities.filter((e) => e.kind !== 'file');
+      // Scalable initial graph:
+      const nonFileEntities = Object.values(analysis.entities).filter((e) => e.kind !== 'file');
 
-      // Filter kinds if specified
+      // Top hubs from centrality metrics (bounded to top 25)
+      const topHubIds = new Set<string>(
+        (analysis.stats?.mostConnected || []).slice(0, 25).map((m) => m.symbolId)
+      );
+
+      // Add top 5 routes
+      let routeCount = 0;
+      for (const e of nonFileEntities) {
+        if (e.kind === 'route') {
+          topHubIds.add(e.id);
+          routeCount++;
+          if (routeCount >= 5) break;
+        }
+      }
+
+      // Add user-expanded nodes and their immediate neighbors
+      for (const expId of expandedNodeIds) {
+        topHubIds.add(expId);
+        for (const rel of analysis.relationships) {
+          if (rel.sourceId === expId) topHubIds.add(rel.targetId);
+          if (rel.targetId === expId) topHubIds.add(rel.sourceId);
+        }
+      }
+
+      candidateEntities = nonFileEntities.filter((e) => topHubIds.has(e.id));
+
+      // Apply kind filter if requested
       if (filterKinds && filterKinds.length > 0) {
         candidateEntities = candidateEntities.filter((e) => filterKinds.includes(e.kind));
-      } else {
-        // Cap visible nodes to top connected to keep canvas snappy and readable
-        const topHubIds = new Set(analysis.stats.mostConnected.slice(0, 35).map((m) => m.symbolId));
-        // Add all routes, components, and db queries
-        for (const e of Object.values(analysis.entities)) {
-          if (e.kind === 'route' || e.kind === 'db_query' || e.kind === 'component') topHubIds.add(e.id);
-        }
-        candidateEntities = candidateEntities.filter((e) => topHubIds.has(e.id));
+      }
+
+      // Safety bounds: cap to 50 nodes max for instant Dagre layout
+      if (candidateEntities.length > 50) {
+        candidateEntities = candidateEntities.slice(0, 50);
       }
     }
 
     const entityIds = new Set(candidateEntities.map((e) => e.id));
 
-    // Build React Flow nodes
     const rawNodes: Node[] = candidateEntities.map((entity) => ({
       id: entity.id,
       type: 'traceNode',
-      data: { entity },
+      data: {
+        entity,
+        neighborCount: neighborCounts.get(entity.id) || 0,
+        isExpanded: expandedNodeIds.has(entity.id),
+        onExpand: toggleExpandNode,
+      },
       position: { x: 0, y: 0 },
-      selected: entity.id === selectedEntityId,
     }));
 
-    // Build React Flow edges
     const rawEdges: Edge[] = [];
     for (const rel of analysis.relationships) {
       if (entityIds.has(rel.sourceId) && entityIds.has(rel.targetId)) {
-        const isRoute = rel.kind === 'routes_to';
-        const isCalls = rel.kind === 'calls';
-        const isFocusPath = Boolean(selectedEntityId && (rel.sourceId === selectedEntityId || rel.targetId === selectedEntityId));
-
         rawEdges.push({
           id: rel.id,
           source: rel.sourceId,
           target: rel.targetId,
-          animated: isFocusPath,
           label: rel.kind === 'routes_to' ? 'routes' : rel.kind === 'calls' ? 'calls' : rel.kind,
-          style: {
-            stroke: isFocusPath ? '#2563EB' : '#CBD5E1',
-            strokeWidth: isFocusPath ? 2.2 : 1.2,
-          },
+          style: { stroke: '#CBD5E1', strokeWidth: 1.2 },
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: isFocusPath ? '#2563EB' : '#94A3B8',
+            color: '#94A3B8',
           },
         });
       }
     }
 
-    return getLayoutedElements(rawNodes, rawEdges, 'LR');
-  }, [analysis, selectedEntityId, filterKinds, focusEntityId]);
+    const layoutResult = getLayoutedElements(rawNodes, rawEdges, 'LR');
+    const topoKey = Array.from(entityIds).sort().join(',');
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+    return {
+      layoutedNodes: layoutResult.nodes,
+      layoutedEdges: layoutResult.edges,
+      topologyKey: topoKey,
+    };
+  }, [analysis, filterKinds, focusEntityId, expandedNodeIds, neighborCounts, toggleExpandNode]);
 
-  // Sync state when props change
-  React.useEffect(() => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
+  // Apply selection highlights without recalculating Dagre positions
+  const styledNodes = useMemo(() => {
+    return layoutedNodes.map((n) => ({
+      ...n,
+      selected: n.id === selectedEntityId,
+      data: {
+        ...n.data,
+        isExpanded: expandedNodeIds.has(n.id),
+        onExpand: toggleExpandNode,
+      },
+    }));
+  }, [layoutedNodes, selectedEntityId, expandedNodeIds, toggleExpandNode]);
+
+  const styledEdges = useMemo(() => {
+    return layoutedEdges.map((e) => {
+      const isFocusPath = Boolean(
+        selectedEntityId && (e.source === selectedEntityId || e.target === selectedEntityId)
+      );
+      return {
+        ...e,
+        animated: isFocusPath,
+        style: {
+          stroke: isFocusPath ? '#2563EB' : '#CBD5E1',
+          strokeWidth: isFocusPath ? 2.2 : 1.2,
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: isFocusPath ? '#2563EB' : '#94A3B8',
+        },
+      };
+    });
+  }, [layoutedEdges, selectedEntityId]);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(styledNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(styledEdges);
+
+  useEffect(() => {
+    setNodes(styledNodes);
+  }, [styledNodes, setNodes]);
+
+  useEffect(() => {
+    setEdges(styledEdges);
+  }, [styledEdges, setEdges]);
+
+  // Fit view ONLY when graph topology actually changes (not on selection clicks)
+  useEffect(() => {
+    if (topologyKey && topologyKey !== lastTopologyKeyRef.current) {
+      lastTopologyKeyRef.current = topologyKey;
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.25, duration: 350 });
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [topologyKey, fitView]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -233,8 +369,6 @@ export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
         minZoom={0.2}
         maxZoom={2}
       >
@@ -256,5 +390,13 @@ export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
         />
       </ReactFlow>
     </div>
+  );
+}
+
+export const RelationshipGraph: React.FC<RelationshipGraphProps> = (props) => {
+  return (
+    <ReactFlowProvider>
+      <RelationshipGraphContent {...props} />
+    </ReactFlowProvider>
   );
 };

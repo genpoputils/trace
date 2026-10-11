@@ -1,67 +1,69 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { githubClient } from '@/lib/github/github-client';
-import { ZipIngestionService } from '@/lib/ingestion/zip-ingestion';
-import { CodebaseAnalyzer } from '@/lib/analyzer/codebase-analyzer';
-import { projectStore } from '@/lib/storage/project-store';
+import { analysisJobService } from '@/lib/analysis/analysis-job-service';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { owner, repo, branch = 'main' } = body;
+    const { owner, repo, branch = 'main', sync = false } = body;
 
     if (!owner || !repo) {
-      return NextResponse.json({ error: 'owner and repo are required parameters' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'owner and repo are required parameters' },
+        { status: 400 }
+      );
     }
 
     const tokenFromCookie = req.cookies.get('gh_token')?.value;
     const token = body.token || tokenFromCookie;
 
-    // 1. Download repository archive from GitHub
-    const { buffer, commitSha } = await githubClient.downloadRepoArchive(owner, repo, branch, token);
+    const result = await analysisJobService.startOrGetJob(owner, repo, branch, token);
 
-    // 2. Safely decompress and validate files
-    const zipService = new ZipIngestionService();
-    const ingestion = await zipService.ingestZip(buffer, `${owner}-${repo}.zip`);
-
-    if (Object.keys(ingestion.files).length === 0) {
+    // If synchronous execution was explicitly requested (e.g. for testing/compatibility)
+    if (sync) {
+      const maxWaitMs = 180000;
+      const start = Date.now();
+      while (Date.now() - start < maxWaitMs) {
+        const job = analysisJobService.getJob(result.jobId);
+        if (job) {
+          if (job.stage === 'completed') {
+            return NextResponse.json({
+              success: true,
+              jobId: job.id,
+              projectId: job.projectId,
+              projectName: `${owner}/${repo}`,
+              commitSha: job.commitSha,
+              shortSha: job.shortSha,
+              branch,
+              stats: job.stats,
+              warnings: job.warnings || [],
+              cached: result.cached || false,
+            });
+          }
+          if (job.stage === 'failed') {
+            return NextResponse.json(
+              { error: job.error || 'Repository analysis failed' },
+              { status: 500 }
+            );
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
       return NextResponse.json(
-        {
-          error: `No supported TypeScript/JavaScript files found in '${owner}/${repo}@${branch}'.`,
-          skippedFiles: ingestion.skippedFiles,
-        },
-        { status: 422 }
+        { error: 'Analysis timed out during synchronous wait.' },
+        { status: 504 }
       );
     }
 
-    // 3. Run static analysis
-    const analyzer = new CodebaseAnalyzer();
-    const projectName = `${owner}/${repo}`;
-    const analysis = analyzer.analyzeProject(projectName, ingestion.files);
-
-    // 4. Attach Git & Commit metadata
-    analysis.gitMetadata = {
-      owner,
-      repo,
-      branch,
-      commitSha,
-      commitUrl: `https://github.com/${owner}/${repo}/commit/${commitSha}`,
-      repoUrl: `https://github.com/${owner}/${repo}`,
-    };
-
-    projectStore.saveProject(analysis);
-
+    // By default: Return job ID immediately (<100ms) for responsive background processing
     return NextResponse.json({
       success: true,
-      projectId: analysis.projectId,
-      projectName: analysis.projectName,
-      commitSha,
-      shortSha: commitSha.slice(0, 7),
-      branch,
-      stats: analysis.stats,
-      warnings: [...ingestion.warnings, ...analysis.warnings.map((w) => w.message)],
+      jobId: result.jobId,
+      status: result.status,
+      projectId: result.projectId,
+      cached: result.cached || false,
     });
   } catch (error) {
-    console.error('GitHub analysis failed:', error);
+    console.error('GitHub analysis enqueue failed:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to analyze GitHub repository' },
       { status: 500 }
