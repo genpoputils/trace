@@ -227,8 +227,10 @@ export class CodebaseAnalyzer {
     for (const entity of Object.values(allEntities)) {
       if (entity.kind === 'route') {
         const routeCalls = callsBySourceId.get(entity.id) || [];
+        const seenTargets = new Set<string>();
         for (const call of routeCalls) {
-          if (allEntities[call.targetId]) {
+          if (allEntities[call.targetId] && !seenTargets.has(call.targetId)) {
+            seenTargets.add(call.targetId);
             resolvedRelationships.push({
               id: `${entity.id}->routes_to->${call.targetId}`,
               sourceId: entity.id,
