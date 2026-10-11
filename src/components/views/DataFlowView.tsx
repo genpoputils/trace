@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ProjectAnalysis, DataFlowTrace } from '@/lib/types/trace';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   ArrowDown,
   Database,
@@ -70,18 +71,9 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
     const reqId = ++activeReqIdRef.current;
     setLoading(true);
 
-    fetch('/api/dataflow', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: analysis.projectId,
-        symbolOrEntityId: currentSymbolId,
-      }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    browserAnalysisService.traceDataFlow(analysis.projectId, currentSymbolId)
+      .then((resFlow) => {
         if (reqId === activeReqIdRef.current) {
-          const resFlow = data.dataFlow || null;
           if (resFlow) {
             flowCacheRef.current.set(cacheKey, resFlow);
           }

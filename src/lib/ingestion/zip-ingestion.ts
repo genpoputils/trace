@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import path from 'path';
+import { browserPath as path } from '../utils/browser-path';
 import { FileRecord } from '../types/trace';
 
 export interface IngestionOptions {
@@ -159,7 +159,9 @@ export class ZipIngestionService {
       // Read text content
       try {
         const textContent = await zipEntry.async('string');
-        const byteLength = Buffer.byteLength(textContent, 'utf8');
+        const byteLength = typeof TextEncoder !== 'undefined'
+          ? new TextEncoder().encode(textContent).length
+          : textContent.length;
 
         if (byteLength > maxFileSize) {
           skippedFiles.push({

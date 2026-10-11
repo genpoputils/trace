@@ -17,6 +17,8 @@ import {
   Play,
 } from 'lucide-react';
 import { GitHubRepo, GitHubBranch } from '@/lib/github/types';
+import { browserGitHubClient } from '@/lib/github/browser-github-client';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 
 interface GitHubModalProps {
   isOpen: boolean;
@@ -67,16 +69,12 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
     };
   }, []);
 
-  // Fetch status on open
+  // Check status on open
   useEffect(() => {
     if (isOpen) {
-      fetch('/api/github/status')
-        .then((res) => res.json())
-        .then((data) => {
-          setAuthStatus(data.status);
-          fetchRepos();
-        })
-        .catch(() => {});
+      const status = browserGitHubClient.getAuthStatus(personalToken || undefined);
+      setAuthStatus(status);
+      fetchRepos();
     }
   }, [isOpen]);
 
@@ -84,24 +82,15 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
     setLoadingRepos(true);
     setError(null);
     try {
-      const res = await fetch('/api/github/repos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token || personalToken || undefined }),
-      });
-      const data = await res.json();
-      if (res.ok && data.repos) {
-        setRepos(data.repos);
-        if (data.repos.length > 0) {
-          const first = data.repos[0];
-          setSelectedRepoFullName(first.fullName);
-          fetchBranches(first.owner.login, first.name, token || personalToken);
-        }
-      } else {
-        setError(data.error || 'Failed to fetch repositories.');
+      const repoList = await browserGitHubClient.listUserRepos(token || personalToken || undefined);
+      setRepos(repoList);
+      if (repoList.length > 0) {
+        const first = repoList[0];
+        setSelectedRepoFullName(first.fullName);
+        fetchBranches(first.owner.login, first.name, token || personalToken);
       }
-    } catch {
-      setError('Network error fetching GitHub repositories.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error fetching GitHub repositories.');
     } finally {
       setLoadingRepos(false);
     }
@@ -110,17 +99,10 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   const fetchBranches = async (owner: string, repo: string, token?: string) => {
     setLoadingBranches(true);
     try {
-      const res = await fetch('/api/github/branches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ owner, repo, token: token || personalToken || undefined }),
-      });
-      const data = await res.json();
-      if (res.ok && data.branches) {
-        setBranches(data.branches);
-        if (data.branches.length > 0) {
-          setSelectedBranch(data.branches[0].name);
-        }
+      const branchList = await browserGitHubClient.listBranches(owner, repo, token || personalToken || undefined);
+      setBranches(branchList);
+      if (branchList.length > 0) {
+        setSelectedBranch(branchList[0].name);
       }
     } catch {
       // ignore
@@ -142,77 +124,31 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
     setAnalysisStatus(`Connecting to GitHub API for ${owner}/${repo}@${branch}...`);
 
     try {
-      const res = await fetch('/api/github/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          owner,
-          repo,
-          branch,
-          token: personalToken || undefined,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Repository analysis request failed');
-      }
-
-      // If results were instantly returned from cache
-      if (data.cached && data.projectId) {
-        setAnalysisStatus(`Loaded cached analysis for commit ${data.shortSha || ''}!`);
-        onProjectLoaded(data.projectId);
-        onClose();
-        return;
-      }
-
-      // Start background polling for real progress
-      const jobId = data.jobId;
-      if (!jobId) {
-        throw new Error('Server did not return a valid job ID');
-      }
-
-      setAnalysisStatus('Job enqueued. Downloading source archive...');
-
-      if (activePollRef.current) clearInterval(activePollRef.current);
-
-      activePollRef.current = setInterval(async () => {
-        try {
-          const pollRes = await fetch(`/api/jobs/${jobId}`);
-          const pollData = await pollRes.json();
-
-          if (!pollRes.ok || !pollData.job) {
-            if (activePollRef.current) clearInterval(activePollRef.current);
-            setError(pollData.error || 'Failed to poll job status');
-            setAnalyzing(false);
-            return;
-          }
-
-          const job = pollData.job;
-          setCurrentJob(job);
-          if (job.progress?.message) {
-            setAnalysisStatus(job.progress.message);
-          }
-
-          if (job.stage === 'completed') {
-            if (activePollRef.current) clearInterval(activePollRef.current);
-            setAnalyzing(false);
-            onProjectLoaded(job.projectId);
-            onClose();
-          } else if (job.stage === 'failed') {
-            if (activePollRef.current) clearInterval(activePollRef.current);
-            setAnalyzing(false);
-            setError(job.error || 'Repository analysis failed');
-          }
-        } catch (pollErr) {
-          if (activePollRef.current) clearInterval(activePollRef.current);
-          setAnalyzing(false);
-          setError(pollErr instanceof Error ? pollErr.message : 'Error checking job status');
+      const result = await browserAnalysisService.importGitHubRepo(
+        owner,
+        repo,
+        branch,
+        personalToken || undefined,
+        (stage, prog) => {
+          setAnalysisStatus(prog.message);
+          setCurrentJob({
+            id: `job_${Date.now()}`,
+            stage,
+            progress: prog,
+          });
         }
-      }, 700);
+      );
+
+      if (result.cached) {
+        setAnalysisStatus(`Loaded cached analysis!`);
+      } else {
+        setAnalysisStatus('Analysis complete! Loading interactive graph...');
+      }
+      onProjectLoaded(result.projectId);
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
+    } finally {
       setAnalyzing(false);
     }
   };
@@ -289,34 +225,24 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {authStatus?.oauthConfigured ? (
+                  {personalToken ? (
                     <span style={{ color: 'var(--success-teal)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600 }}>
-                      <CheckCircle2 size={14} /> OAuth Integration Configured
+                      <CheckCircle2 size={14} /> Personal Access Token Applied (Active Session)
                     </span>
                   ) : (
-                    <span style={{ color: 'var(--warning-amber)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                      <Key size={14} /> OAuth not yet configured in .env (Use PAT or Public)
+                    <span style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                      <Globe size={14} /> Public Mode (50 req/hr rate limit). Add a token for private repos and 5,000 req/hr.
                     </span>
                   )}
                 </div>
 
-                {authStatus?.oauthConfigured ? (
-                  <a
-                    href="/api/github/auth"
-                    className="tool-btn active"
-                    style={{ textDecoration: 'none', fontSize: 11 }}
-                  >
-                    Authorize with GitHub
-                  </a>
-                ) : (
-                  <button
-                    onClick={() => setActiveTab('setup')}
-                    className="tool-btn"
-                    style={{ fontSize: 11 }}
-                  >
-                    View Setup Instructions
-                  </button>
-                )}
+                <button
+                  onClick={() => setActiveTab('setup')}
+                  className="tool-btn"
+                  style={{ fontSize: 11 }}
+                >
+                  <HelpCircle size={13} /> Token Guide
+                </button>
               </div>
 
               {/* Personal Access Token Input */}
@@ -531,35 +457,21 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, color: 'var(--text-secondary)' }}>
               <div style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
                 <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>
-                  How to Configure GitHub OAuth for Local Development:
+                  Direct Browser-Side GitHub Integration:
                 </strong>
+                <p style={{ marginBottom: 8 }}>
+                  Trace runs 100% locally in your browser without requiring a backend server.
+                </p>
                 <ol style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <li>Go to <code>https://github.com/settings/developers</code></li>
-                  <li>Click <strong>&quot;New OAuth App&quot;</strong></li>
-                  <li>Set <strong>Application name:</strong> <code>GenPopUtils Trace</code></li>
-                  <li>Set <strong>Homepage URL:</strong> <code>http://localhost:3000</code></li>
-                  <li>Set <strong>Authorization callback URL:</strong> <code>http://localhost:3000/api/github/callback</code></li>
-                  <li>Copy the generated <strong>Client ID</strong> and <strong>Client Secret</strong> into your <code>.env.local</code> file:</li>
+                  <li><strong>Public Repositories:</strong> Analyze any public repository directly without signing in (subject to GitHub&apos;s 60 req/hr public rate limit).</li>
+                  <li><strong>Private Repositories:</strong> Generate a Personal Access Token on GitHub with <code>repo</code> scope at <code>github.com/settings/tokens</code>.</li>
+                  <li><strong>Local Security:</strong> Your token is kept only in active browser memory during this tab session. It is never stored on disk, never sent to external servers, and never written to localStorage.</li>
+                  <li><strong>CORS Fallback:</strong> If browser CORS restrictions prevent direct zipball downloads for specific repositories, download the repository <code>.zip</code> directly from GitHub and use Trace&apos;s <strong>&quot;Import Repository Archive&quot;</strong> button.</li>
                 </ol>
-                <pre
-                  style={{
-                    marginTop: 10,
-                    padding: 10,
-                    background: 'var(--bg-tertiary)',
-                    borderRadius: 4,
-                    color: 'var(--text-primary)',
-                    fontSize: 12,
-                    fontFamily: 'var(--font-mono)',
-                    border: '1px solid var(--border-color)',
-                  }}
-                >
-{`GITHUB_CLIENT_ID=your_client_id_here
-GITHUB_CLIENT_SECRET=your_client_secret_here`}
-                </pre>
               </div>
 
               <div style={{ padding: 12, background: 'var(--blue-selection-bg)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--primary-blue)' }}>
-                <strong>No OAuth setup needed for local inspection:</strong> You can also paste a GitHub Personal Access Token (PAT) with <code>repo</code> scope directly into the field above to analyze private repositories without configuring an OAuth application.
+                <strong>Zero Trace Backend Required:</strong> Repositories are decompressed and analyzed in your browser&apos;s Web Worker, keeping full code privacy on your machine.
               </div>
             </div>
           )}

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ProjectAnalysis, ImpactReport } from '@/lib/types/trace';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   AlertOctagon,
   Route,
@@ -73,18 +74,9 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
     const reqId = ++activeReqIdRef.current;
     setLoading(true);
 
-    fetch('/api/impact', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: analysis.projectId,
-        entityId: currentEntityId,
-      }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    browserAnalysisService.analyzeImpact(analysis.projectId, currentEntityId)
+      .then((resImpact) => {
         if (reqId === activeReqIdRef.current) {
-          const resImpact = data.impact || null;
           if (resImpact) {
             impactCacheRef.current.set(cacheKey, resImpact);
           }

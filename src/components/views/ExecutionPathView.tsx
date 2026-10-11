@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ProjectAnalysis, ExecutionPath } from '@/lib/types/trace';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   ArrowRight,
   ArrowLeft,
@@ -83,19 +84,12 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
     const reqId = ++activeReqIdRef.current;
     setLoading(true);
 
-    fetch('/api/trace', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: analysis.projectId,
-        entityId: currentEntryId,
-        direction,
-      }),
+    browserAnalysisService.traceExecutionPath(analysis.projectId, currentEntryId, {
+      direction,
+      maxDepth: 12,
     })
-      .then((res) => res.json())
-      .then((data) => {
+      .then((resTrace) => {
         if (reqId === activeReqIdRef.current) {
-          const resTrace = data.trace || null;
           if (resTrace) {
             traceCacheRef.current.set(cacheKey, resTrace);
           }

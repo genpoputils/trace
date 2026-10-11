@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { ProjectAnalysis, TraceEntity } from '@/lib/types/trace';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   X,
   FileCode,
@@ -57,7 +58,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   // File record for full source code viewing
   const fileRecord = entity ? analysis.files[entity.filePath] : undefined;
 
-  // Run AI investigation
+  // Run local AI investigation
   const handleAskAI = async (questionText: string) => {
     if (!questionText.trim()) return;
 
@@ -65,25 +66,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     setAiAnswer(null);
 
     try {
-      const res = await fetch('/api/ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: analysis.projectId,
-          question: questionText,
-          targetEntityId: selectedEntityId,
-        }),
-      });
+      const resp = await browserAnalysisService.investigateQuestion(
+        analysis.projectId,
+        questionText,
+        selectedEntityId || undefined
+      );
 
-      const data = await res.json();
-      if (data.result) {
-        setAiAnswer(data.result.answer);
-        setAiGroundedFiles(data.result.groundedFiles || []);
+      if (resp) {
+        setAiAnswer(resp.answer);
+        setAiGroundedFiles(resp.groundedFiles || []);
       } else {
-        setAiAnswer(data.error || 'Failed to complete investigation');
+        setAiAnswer('Unable to generate answer.');
       }
     } catch (err) {
-      setAiAnswer('Connection error communicating with investigation engine.');
+      setAiAnswer(err instanceof Error ? err.message : 'Error during local investigation.');
     } finally {
       setAiLoading(false);
     }

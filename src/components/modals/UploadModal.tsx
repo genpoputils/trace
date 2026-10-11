@@ -6,10 +6,10 @@ import {
   UploadCloud,
   FileArchive,
   RefreshCw,
-  CheckCircle2,
   AlertTriangle,
   FolderCode,
 } from 'lucide-react';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -38,26 +38,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
     setLoading(true);
     setError(null);
-    setProgressStatus('Decompressing and validating archive contents...');
-
-    const formData = new FormData();
-    formData.append('file', file);
+    setProgressStatus('Extracting archive contents in browser...');
 
     try {
-      setProgressStatus('Parsing TypeScript/JavaScript AST and resolving symbol relationships...');
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to upload and analyze repository');
-      }
+      const result = await browserAnalysisService.importZipArchive(
+        file,
+        file.name,
+        {},
+        (_stage, prog) => {
+          setProgressStatus(prog.message);
+        }
+      );
 
       setProgressStatus('Analysis complete! Loading interactive graph...');
-      onProjectLoaded(data.projectId);
+      onProjectLoaded(result.projectId);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown upload error');

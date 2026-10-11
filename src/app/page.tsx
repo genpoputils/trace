@@ -12,6 +12,7 @@ import { LowerSourcePanel } from '@/components/source/LowerSourcePanel';
 import { UploadModal } from '@/components/modals/UploadModal';
 import { GitHubModal } from '@/components/modals/GitHubModal';
 import { SearchModal } from '@/components/modals/SearchModal';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   Compass,
   Zap,
@@ -91,12 +92,9 @@ export default function TraceHomePage() {
 
   // Load project list
   const refreshProjectsList = useCallback(() => {
-    fetch('/api/projects')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.projects) {
-          setProjectsList(data.projects);
-        }
+    browserAnalysisService.listProjects()
+      .then((projects) => {
+        setProjectsList(projects);
       })
       .catch((err) => console.error('Failed to list projects:', err));
   }, []);
@@ -108,21 +106,20 @@ export default function TraceHomePage() {
   // Load project analysis data
   const loadProject = useCallback((projectId: string) => {
     setLoading(true);
-    fetch(`/api/projects/${projectId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.project) {
-          setAnalysis(data.project);
+    browserAnalysisService.getProject(projectId)
+      .then((project) => {
+        if (project) {
+          setAnalysis(project);
           setCurrentProjectId(projectId);
           setVisitedTabs(new Set([activeTab]));
           // Set initial selected entity to first route or central hub
-          const firstRoute = Object.values(data.project.entities as Record<string, TraceEntity>).find(
+          const firstRoute = Object.values(project.entities as Record<string, TraceEntity>).find(
             (e) => e.kind === 'route'
           );
           if (firstRoute) {
             setSelectedEntityId(firstRoute.id);
-          } else if (data.project.stats?.mostConnected?.[0]) {
-            setSelectedEntityId(data.project.stats.mostConnected[0].symbolId);
+          } else if (project.stats?.mostConnected?.[0]) {
+            setSelectedEntityId(project.stats.mostConnected[0].symbolId);
           }
         }
       })
@@ -134,17 +131,16 @@ export default function TraceHomePage() {
     let ignore = false;
     const fetchInitial = async () => {
       try {
-        const res = await fetch(`/api/projects/${currentProjectId}`);
-        const data = await res.json();
-        if (!ignore && data.project) {
-          setAnalysis(data.project);
-          const firstRoute = Object.values(data.project.entities as Record<string, TraceEntity>).find(
+        const project = await browserAnalysisService.getProject(currentProjectId);
+        if (!ignore && project) {
+          setAnalysis(project);
+          const firstRoute = Object.values(project.entities as Record<string, TraceEntity>).find(
             (e) => e.kind === 'route'
           );
           if (firstRoute) {
             setSelectedEntityId(firstRoute.id);
-          } else if (data.project.stats?.mostConnected?.[0]) {
-            setSelectedEntityId(data.project.stats.mostConnected[0].symbolId);
+          } else if (project.stats?.mostConnected?.[0]) {
+            setSelectedEntityId(project.stats.mostConnected[0].symbolId);
           }
         }
       } catch (err) {

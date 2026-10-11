@@ -7,11 +7,9 @@ import {
   X,
   Code2,
   Route,
-  Zap,
-  Database,
-  Layers,
   ArrowRight,
 } from 'lucide-react';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -40,30 +38,26 @@ export const SearchModal: React.FC<SearchModalProps> = ({
 
   useEffect(() => {
     if (!searchTerm.trim()) {
-      setResults([]);
       return;
     }
 
     let isMounted = true;
-    setLoading(true);
+    Promise.resolve().then(() => {
+      if (isMounted) setLoading(true);
+    });
 
-    fetch('/api/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: analysis.projectId,
-        term: searchTerm,
-        kinds: selectedKind === 'all' ? undefined : [selectedKind],
-      }),
+    browserAnalysisService.searchSymbols(analysis.projectId, {
+      term: searchTerm.trim(),
+      kinds: selectedKind === 'all' ? undefined : [selectedKind],
+      limit: 25,
     })
-      .then((res) => res.json())
       .then((data) => {
         if (isMounted) {
-          setResults(data.results || []);
+          setResults(data);
           setLoading(false);
         }
       })
-      .catch((err) => {
+      .catch(() => {
         if (isMounted) setLoading(false);
       });
 
@@ -85,7 +79,10 @@ export const SearchModal: React.FC<SearchModalProps> = ({
             type="text"
             placeholder="Search functions, routes, classes, files, or symbols..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              if (!e.target.value.trim()) setResults([]);
+            }}
             style={{
               flex: 1,
               background: 'transparent',

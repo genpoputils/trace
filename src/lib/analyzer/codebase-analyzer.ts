@@ -1,4 +1,4 @@
-import path from 'path';
+import { browserPath as path } from '../utils/browser-path';
 import {
   FileRecord,
   ProjectAnalysis,
