@@ -32,6 +32,9 @@ import {
 } from './adapters';
 import { getDirname } from './utils';
 import { buildDependencyProvenance, reconcileWorkspaceProvenance } from './provenance';
+import { mapPackagesToSourceUsage } from './source-usage';
+import { buildPackageDependencyGraph } from './graph';
+import { TraceEntity } from '../types/trace';
 
 export class EcosystemRegistry {
   private adapters: EcosystemAdapter[] = [];
@@ -175,7 +178,8 @@ export class EcosystemRegistry {
    * Executes synchronous multi-ecosystem dependency intelligence scan on a repository files map.
    */
   public scanRepositorySync(
-    files: Record<string, { path?: string; content: string }>
+    files: Record<string, { path?: string; content: string }>,
+    entities?: Record<string, TraceEntity>
   ): DependencyScanResult {
     const filePaths = Object.keys(files);
     const discoveredFiles = this.detectFiles(filePaths);
@@ -334,6 +338,14 @@ export class EcosystemRegistry {
       (df) => df.kind === 'lockfile' || df.kind === 'checksum_file'
     ).length;
 
+    // Phase 6: Map dependencies to source-code usage and construct typed package dependency graph
+    const sourceUsageResult = mapPackagesToSourceUsage(allDependencies, files, entities);
+    const graph = buildPackageDependencyGraph({
+      dependencies: allDependencies,
+      sourceUsages: sourceUsageResult.usagesByPackageId,
+      workspaces: allWorkspaces,
+    });
+
     return {
       ecosystems: Array.from(ecosystemsSet),
       packageManagers: Array.from(packageManagersSet),
@@ -341,6 +353,8 @@ export class EcosystemRegistry {
       workspaces: allWorkspaces,
       dependencies: allDependencies,
       diagnostics: allDiagnostics,
+      graph,
+      sourceUsages: sourceUsageResult.usagesByPackageId,
       stats: {
         totalManifests: manifestFiles.length,
         totalLockfiles: lockfileCount,
@@ -352,6 +366,7 @@ export class EcosystemRegistry {
         declaredOnlyCount,
         withInstalledVersionCount,
         conflictsCount,
+        totalSourceUsagesCount: sourceUsageResult.totalUsagesCount,
       },
       capabilityMatrix: ECOSYSTEM_CAPABILITY_MATRIX,
     };
@@ -361,18 +376,20 @@ export class EcosystemRegistry {
    * Asynchronous wrapper for multi-ecosystem repository scanning.
    */
   public async scanRepository(
-    files: Record<string, { path?: string; content: string }>
+    files: Record<string, { path?: string; content: string }>,
+    entities?: Record<string, TraceEntity>
   ): Promise<DependencyScanResult> {
-    return this.scanRepositorySync(files);
+    return this.scanRepositorySync(files, entities);
   }
 
   /**
    * Alias for scanRepository.
    */
   public async scanCodebase(
-    files: Record<string, { path?: string; content: string }>
+    files: Record<string, { path?: string; content: string }>,
+    entities?: Record<string, TraceEntity>
   ): Promise<DependencyScanResult> {
-    return this.scanRepository(files);
+    return this.scanRepository(files, entities);
   }
 }
 

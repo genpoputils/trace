@@ -284,7 +284,7 @@ export class CodebaseAnalyzer {
 
     // Phase 5: Multi-Ecosystem Dependency Intelligence Scan
     const depScanner = EcosystemRegistry.getInstance();
-    const depResult = depScanner.scanRepositorySync(files);
+    const depResult = depScanner.scanRepositorySync(files, allEntities);
     if (depResult.discoveredFiles.length > 0) {
       for (const diag of depResult.diagnostics) {
         if (diag.severity === 'error' || diag.severity === 'warning') {

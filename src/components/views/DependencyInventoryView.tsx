@@ -20,27 +20,45 @@ import {
   ChevronRight,
   Info,
   Search,
-  HardDrive,
   X,
+  GitBranch,
 } from 'lucide-react';
+import { PackageDependencyGraphView } from '../graph/PackageDependencyGraphView';
+import { PackageInspector } from '../inspector/PackageInspector';
+import { getStablePackageId } from '@/lib/dependencies/graph';
 
 interface DependencyInventoryViewProps {
   analysis: ProjectAnalysis;
+  selectedPackageId?: string | null;
+  onSelectPackage?: (packageId: string) => void;
+  onOpenSourceLocation?: (location: { filePath: string; line: number }) => void;
 }
 
 export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = ({
   analysis,
+  selectedPackageId: externalSelectedId,
+  onSelectPackage,
+  onOpenSourceLocation,
 }) => {
   const [matrixExpanded, setMatrixExpanded] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'supported' | 'partial' | 'planned'>('all');
 
-  // Provenance & inventory filters
+  // View Mode: Table vs Graph
+  const [viewMode, setViewMode] = useState<'table' | 'graph'>('table');
+
+  // Provenance, health, & inventory filters
   const [searchQuery, setSearchQuery] = useState('');
   const [ecosystemFilter, setEcosystemFilter] = useState<string>('all');
-  const [provenanceFilter, setProvenanceFilter] = useState<
-    'all' | 'resolved' | 'declared_only' | 'conflicts' | 'installed'
+  const [scopeFilter, setScopeFilter] = useState<string>('all');
+  const [healthFilter, setHealthFilter] = useState<
+    'all' | 'clean' | 'unlocked' | 'conflicts' | 'duplicates' | 'unreferenced' | 'installed'
   >('all');
-  const [selectedDep, setSelectedDep] = useState<NormalizedDependency | null>(null);
+
+  // Internal selected package ID
+  const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
+  const activeSelectedId = externalSelectedId !== undefined && externalSelectedId !== null
+    ? externalSelectedId
+    : internalSelectedId;
 
   const depScan = analysis.dependencies;
   const discoveredFiles: DiscoveredDependencyFile[] = useMemo(
@@ -88,27 +106,71 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
     return ECOSYSTEM_CAPABILITY_MATRIX.filter((e) => e.status === statusFilter);
   }, [statusFilter]);
 
-  // Provenance-specific statistics derived dynamically from data model
-  const provenanceStats = useMemo(() => {
-    let resolvedCount = 0;
-    let declaredOnlyCount = 0;
-    let installedCount = 0;
+  // Track duplicates across ecosystems
+  const duplicateNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const dep of dependencies) {
+      const key = `${dep.ecosystem}:${dep.name.toLowerCase()}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const dupes = new Set<string>();
+    for (const [key, count] of counts.entries()) {
+      if (count > 1) dupes.add(key);
+    }
+    return dupes;
+  }, [dependencies]);
+
+  // Comprehensive health & provenance statistics derived dynamically
+  const healthStats = useMemo(() => {
+    let cleanCount = 0;
+    let unlockedCount = 0;
     let conflictsCount = 0;
+    let duplicatesCount = 0;
+    let unreferencedCount = 0;
+    let installedCount = 0;
 
     for (const dep of dependencies) {
-      if (dep.versionResolved) resolvedCount++;
-      if (dep.isDirect && !dep.versionResolved) declaredOnlyCount++;
-      if (dep.versionInstalled) installedCount++;
+      const usages = depScan?.sourceUsages?.[dep.id] || [];
+      const isDupe = duplicateNames.has(`${dep.ecosystem}:${dep.name.toLowerCase()}`);
+
       if (dep.provenance?.hasConflict) conflictsCount++;
+      if (dep.isDirect && !dep.versionResolved) unlockedCount++;
+      if (dep.versionResolved && !dep.provenance?.hasConflict) cleanCount++;
+      if (dep.versionInstalled) installedCount++;
+      if (isDupe) duplicatesCount++;
+      if (dep.isDirect && usages.length === 0) unreferencedCount++;
     }
 
     return {
-      resolvedCount,
-      declaredOnlyCount,
-      installedCount,
+      cleanCount,
+      unlockedCount,
       conflictsCount,
+      duplicatesCount,
+      unreferencedCount,
+      installedCount,
+      totalUsages: depScan?.stats?.totalSourceUsagesCount || 0,
     };
-  }, [dependencies]);
+  }, [dependencies, duplicateNames, depScan?.sourceUsages, depScan?.stats?.totalSourceUsagesCount]);
+
+  // Resolve selected node and dependency
+  const selectedPackageNode = useMemo(() => {
+    if (!activeSelectedId) return null;
+    return depScan?.graph?.nodes?.[activeSelectedId] || null;
+  }, [depScan?.graph, activeSelectedId]);
+
+  const selectedDep = useMemo(() => {
+    if (!activeSelectedId) return null;
+    return (
+      dependencies.find(
+        (d) => d.id === activeSelectedId || getStablePackageId(d) === activeSelectedId
+      ) || null
+    );
+  }, [dependencies, activeSelectedId]);
+
+  const handleSelectPackage = (id: string | null) => {
+    setInternalSelectedId(id);
+    onSelectPackage?.(id || '');
+  };
 
   // Distinct ecosystems present in analyzed project
   const availableEcosystems = useMemo(() => {
@@ -134,15 +196,25 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
         return false;
       }
 
-      // 3. Provenance Status Filter
-      if (provenanceFilter === 'resolved' && !dep.versionResolved) return false;
-      if (provenanceFilter === 'declared_only' && (dep.versionResolved || !dep.isDirect)) return false;
-      if (provenanceFilter === 'installed' && !dep.versionInstalled) return false;
-      if (provenanceFilter === 'conflicts' && !dep.provenance?.hasConflict) return false;
+      // 3. Scope Filter
+      if (scopeFilter !== 'all' && dep.scope !== scopeFilter) {
+        return false;
+      }
+
+      // 4. Health & Provenance Status Filter
+      const usages = depScan?.sourceUsages?.[dep.id] || [];
+      const isDupe = duplicateNames.has(`${dep.ecosystem}:${dep.name.toLowerCase()}`);
+
+      if (healthFilter === 'clean' && (!dep.versionResolved || dep.provenance?.hasConflict)) return false;
+      if (healthFilter === 'unlocked' && (!dep.isDirect || dep.versionResolved)) return false;
+      if (healthFilter === 'conflicts' && !dep.provenance?.hasConflict) return false;
+      if (healthFilter === 'duplicates' && !isDupe) return false;
+      if (healthFilter === 'unreferenced' && (!dep.isDirect || usages.length > 0)) return false;
+      if (healthFilter === 'installed' && !dep.versionInstalled) return false;
 
       return true;
     });
-  }, [dependencies, searchQuery, ecosystemFilter, provenanceFilter]);
+  }, [dependencies, searchQuery, ecosystemFilter, scopeFilter, healthFilter, duplicateNames, depScan?.sourceUsages]);
 
   const hasLockfileForEcosystem = (ecosystem: string) => {
     return lockfiles.some((l) => l.ecosystem === ecosystem);
@@ -241,30 +313,30 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
 
           {/* Card 3: Resolved with Lockfile */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Resolved with Lockfile</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Verified Clean Lockfiles</div>
             <div style={{ fontSize: 24, fontWeight: 700, marginTop: 6, color: 'var(--success-teal)' }}>
-              {provenanceStats.resolvedCount}
+              {healthStats.cleanCount}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
               Evidence-backed pinned versions
             </div>
           </div>
 
-          {/* Card 4: Declared Only (Unresolved) */}
+          {/* Card 4: Declared Only (Unlocked) */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Declared Only (Unresolved)</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Unlocked (Declared Only)</div>
             <div
               style={{
                 fontSize: 24,
                 fontWeight: 700,
                 marginTop: 6,
-                color: provenanceStats.declaredOnlyCount > 0 ? 'var(--warning-amber)' : 'var(--text-muted)',
+                color: healthStats.unlockedCount > 0 ? 'var(--warning-amber)' : 'var(--text-muted)',
               }}
             >
-              {provenanceStats.declaredOnlyCount}
+              {healthStats.unlockedCount}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-              {provenanceStats.declaredOnlyCount > 0 ? 'Missing lockfile evidence' : 'All declared are resolved'}
+              {healthStats.unlockedCount > 0 ? 'Missing lockfile resolution' : 'All declared are locked'}
             </div>
           </div>
 
@@ -272,24 +344,35 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
           <div
             style={{
               background: 'var(--bg-card)',
-              border: `1px solid ${provenanceStats.conflictsCount > 0 ? 'rgba(239, 68, 68, 0.4)' : 'var(--border-color)'}`,
+              border: `1px solid ${healthStats.conflictsCount > 0 ? 'rgba(239, 68, 68, 0.4)' : 'var(--border-color)'}`,
               borderRadius: 'var(--radius-md)',
               padding: 16,
             }}
           >
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Provenance Conflicts</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Version Conflicts</div>
             <div
               style={{
                 fontSize: 24,
                 fontWeight: 700,
                 marginTop: 6,
-                color: provenanceStats.conflictsCount > 0 ? 'var(--danger-red, #ef4444)' : 'var(--success-teal)',
+                color: healthStats.conflictsCount > 0 ? 'var(--danger-red, #ef4444)' : 'var(--success-teal)',
               }}
             >
-              {provenanceStats.conflictsCount}
+              {healthStats.conflictsCount}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-              {provenanceStats.conflictsCount > 0 ? 'Range mismatches or conflicts' : 'Zero discrepancies detected'}
+              {healthStats.conflictsCount > 0 ? 'Range mismatches detected' : 'Zero conflicts detected'}
+            </div>
+          </div>
+
+          {/* Card 6: Mapped Source Usages (GT-014) */}
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 16 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Source Code Usages</div>
+            <div style={{ fontSize: 24, fontWeight: 700, marginTop: 6, color: 'var(--primary-blue)' }}>
+              {healthStats.totalUsages}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              {healthStats.unreferencedCount > 0 ? `${healthStats.unreferencedCount} unreferenced direct package(s)` : 'All direct packages referenced'}
             </div>
           </div>
         </div>
@@ -364,14 +447,47 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
           )}
         </div>
 
-        {/* Normalized Dependency Inventory Table with Distinct Declared & Resolved Versions */}
+        {/* Normalized Dependency Inventory & Package Graph (GT-013, GT-014, GT-015, GT-016) */}
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Layers size={16} color="var(--primary-blue)" /> Normalized Dependency Inventory ({filteredDependencies.length}/{dependencies.length})
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Layers size={16} color="var(--primary-blue)" /> Dependency Intelligence Inventory ({filteredDependencies.length}/{dependencies.length})
+              </div>
+
+              {/* View Mode Toggle */}
+              <div
+                style={{
+                  display: 'flex',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-color)',
+                  padding: 2,
+                  gap: 2,
+                }}
+                role="group"
+                aria-label="View mode toggle"
+              >
+                <button
+                  onClick={() => setViewMode('table')}
+                  className={`tool-btn ${viewMode === 'table' ? 'active' : ''}`}
+                  style={{ fontSize: 11, padding: '3px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
+                  aria-pressed={viewMode === 'table'}
+                >
+                  <Layers size={12} /> Table View
+                </button>
+                <button
+                  onClick={() => setViewMode('graph')}
+                  className={`tool-btn ${viewMode === 'graph' ? 'active' : ''}`}
+                  style={{ fontSize: 11, padding: '3px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
+                  aria-pressed={viewMode === 'graph'}
+                >
+                  <GitBranch size={12} /> Graph View
+                </button>
+              </div>
             </div>
 
-            {/* Controls: Search and Filters */}
+            {/* Controls: Search, Ecosystem & Scope Filters */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {/* Search input */}
               <div
@@ -388,7 +504,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                 <Search size={14} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search package name..."
+                  placeholder="Search package or alias..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   style={{
@@ -397,7 +513,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                     outline: 'none',
                     fontSize: 12,
                     color: 'var(--text-primary)',
-                    width: 150,
+                    width: 160,
                   }}
                   aria-label="Search package name"
                 />
@@ -436,51 +552,113 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                   ))}
                 </select>
               )}
+
+              {/* Scope filter dropdown */}
+              <select
+                value={scopeFilter}
+                onChange={(e) => setScopeFilter(e.target.value)}
+                style={{
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-primary)',
+                  padding: '4px 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 12,
+                  outline: 'none',
+                }}
+                aria-label="Filter by scope"
+              >
+                <option value="all">All Scopes</option>
+                <option value="runtime">runtime</option>
+                <option value="dev">dev</option>
+                <option value="peer">peer</option>
+                <option value="optional">optional</option>
+              </select>
             </div>
           </div>
 
-          {/* Filter Tabs for Provenance State */}
+          {/* Filter Tabs for Health & Provenance State (GT-016) */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
             <button
-              onClick={() => setProvenanceFilter('all')}
-              className={`tool-btn ${provenanceFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setHealthFilter('all')}
+              className={`tool-btn ${healthFilter === 'all' ? 'active' : ''}`}
               style={{ fontSize: 11 }}
             >
               All Packages ({dependencies.length})
             </button>
             <button
-              onClick={() => setProvenanceFilter('resolved')}
-              className={`tool-btn ${provenanceFilter === 'resolved' ? 'active' : ''}`}
+              onClick={() => setHealthFilter('clean')}
+              className={`tool-btn ${healthFilter === 'clean' ? 'active' : ''}`}
               style={{ fontSize: 11 }}
             >
-              Resolved ({provenanceStats.resolvedCount})
+              Verified Clean ({healthStats.cleanCount})
             </button>
             <button
-              onClick={() => setProvenanceFilter('declared_only')}
-              className={`tool-btn ${provenanceFilter === 'declared_only' ? 'active' : ''}`}
+              onClick={() => setHealthFilter('unlocked')}
+              className={`tool-btn ${healthFilter === 'unlocked' ? 'active' : ''}`}
               style={{ fontSize: 11 }}
             >
-              Declared Only ({provenanceStats.declaredOnlyCount})
+              Unlocked ({healthStats.unlockedCount})
             </button>
-            <button
-              onClick={() => setProvenanceFilter('installed')}
-              className={`tool-btn ${provenanceFilter === 'installed' ? 'active' : ''}`}
-              style={{ fontSize: 11 }}
-            >
-              Installed Disk ({provenanceStats.installedCount})
-            </button>
-            {provenanceStats.conflictsCount > 0 && (
+            {healthStats.conflictsCount > 0 && (
               <button
-                onClick={() => setProvenanceFilter('conflicts')}
-                className={`tool-btn ${provenanceFilter === 'conflicts' ? 'active' : ''}`}
+                onClick={() => setHealthFilter('conflicts')}
+                className={`tool-btn ${healthFilter === 'conflicts' ? 'active' : ''}`}
                 style={{ fontSize: 11, color: 'var(--danger-red, #ef4444)' }}
               >
-                Conflicts ({provenanceStats.conflictsCount})
+                Conflicts ({healthStats.conflictsCount})
+              </button>
+            )}
+            {healthStats.duplicatesCount > 0 && (
+              <button
+                onClick={() => setHealthFilter('duplicates')}
+                className={`tool-btn ${healthFilter === 'duplicates' ? 'active' : ''}`}
+                style={{ fontSize: 11, color: '#a855f7' }}
+              >
+                Duplicates ({healthStats.duplicatesCount})
+              </button>
+            )}
+            <button
+              onClick={() => setHealthFilter('unreferenced')}
+              className={`tool-btn ${healthFilter === 'unreferenced' ? 'active' : ''}`}
+              style={{ fontSize: 11 }}
+            >
+              Unreferenced in Source ({healthStats.unreferencedCount})
+            </button>
+            {healthStats.installedCount > 0 && (
+              <button
+                onClick={() => setHealthFilter('installed')}
+                className={`tool-btn ${healthFilter === 'installed' ? 'active' : ''}`}
+                style={{ fontSize: 11 }}
+              >
+                Installed Disk ({healthStats.installedCount})
               </button>
             )}
           </div>
 
-          {filteredDependencies.length === 0 ? (
+          {/* Body: Graph View or Table View */}
+          {viewMode === 'graph' ? (
+            <div
+              style={{
+                height: 540,
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-sm)',
+                overflow: 'hidden',
+              }}
+            >
+              {depScan?.graph ? (
+                <PackageDependencyGraphView
+                  graph={depScan.graph}
+                  selectedPackageId={activeSelectedId}
+                  onSelectPackage={handleSelectPackage}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+                  Graph visualization unavailable for current scan result.
+                </div>
+              )}
+            </div>
+          ) : filteredDependencies.length === 0 ? (
             <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
               No dependencies match the current filter criteria.
             </div>
@@ -490,27 +668,34 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '8px 10px' }}>Package & Manifest</th>
+                    <th style={{ padding: '8px 10px' }}>Health Status</th>
                     <th style={{ padding: '8px 10px' }}>Declared Version (Manifest)</th>
                     <th style={{ padding: '8px 10px' }}>Resolved Version (Lockfile)</th>
                     <th style={{ padding: '8px 10px' }}>Installed Version (Disk)</th>
-                    <th style={{ padding: '8px 10px' }}>Provenance Status</th>
+                    <th style={{ padding: '8px 10px' }}>Source Usages</th>
                     <th style={{ padding: '8px 10px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredDependencies.map((pkg) => {
                     const hasConflict = pkg.provenance?.hasConflict;
-                    const isSelected = selectedDep?.id === pkg.id;
+                    const isSelected = activeSelectedId === pkg.id;
+                    const usages = depScan?.sourceUsages?.[pkg.id] || [];
+                    const isDupe = duplicateNames.has(`${pkg.ecosystem}:${pkg.name.toLowerCase()}`);
 
                     return (
                       <tr
                         key={pkg.id}
                         style={{
                           borderBottom: '1px solid var(--border-color)',
-                          background: isSelected ? 'var(--blue-selection-bg)' : hasConflict ? 'rgba(239, 68, 68, 0.04)' : undefined,
+                          background: isSelected
+                            ? 'var(--blue-selection-bg)'
+                            : hasConflict
+                            ? 'rgba(239, 68, 68, 0.04)'
+                            : undefined,
                           cursor: 'pointer',
                         }}
-                        onClick={() => setSelectedDep(isSelected ? null : pkg)}
+                        onClick={() => handleSelectPackage(isSelected ? null : pkg.id)}
                       >
                         {/* Column 1: Package Name & Source */}
                         <td style={{ padding: '10px 10px' }}>
@@ -539,7 +724,88 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                           </div>
                         </td>
 
-                        {/* Column 2: Declared Version */}
+                        {/* Column 2: Health Status Indicator (GT-016) */}
+                        <td style={{ padding: '10px 10px' }}>
+                          {hasConflict ? (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: 'rgba(239, 68, 68, 0.15)',
+                                color: 'var(--danger-red, #ef4444)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontWeight: 600,
+                              }}
+                            >
+                              <AlertTriangle size={12} /> Conflict
+                            </span>
+                          ) : !pkg.versionResolved && pkg.isDirect ? (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: 'rgba(245, 158, 11, 0.12)',
+                                color: 'var(--warning-amber)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontWeight: 500,
+                              }}
+                            >
+                              <AlertCircle size={12} /> Unlocked
+                            </span>
+                          ) : isDupe ? (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: 'rgba(168, 85, 247, 0.15)',
+                                color: '#a855f7',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontWeight: 500,
+                              }}
+                            >
+                              <Layers size={12} /> Duplicate
+                            </span>
+                          ) : pkg.versionResolved ? (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: 'rgba(16, 185, 129, 0.12)',
+                                color: 'var(--success-teal)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontWeight: 500,
+                              }}
+                            >
+                              <CheckCircle2 size={12} /> Clean
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: 'var(--bg-tertiary)',
+                                color: 'var(--text-muted)',
+                              }}
+                            >
+                              Transitive
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Column 3: Declared Version */}
                         <td style={{ padding: '10px 10px' }}>
                           {pkg.versionDeclared ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -569,7 +835,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                           )}
                         </td>
 
-                        {/* Column 3: Resolved Version */}
+                        {/* Column 4: Resolved Version */}
                         <td style={{ padding: '10px 10px' }}>
                           {pkg.versionResolved ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -600,12 +866,12 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                                 color: 'var(--warning-amber)',
                               }}
                             >
-                              Unavailable (no lockfile)
+                              Unavailable
                             </span>
                           )}
                         </td>
 
-                        {/* Column 4: Installed Version */}
+                        {/* Column 5: Installed Version */}
                         <td style={{ padding: '10px 10px' }}>
                           {pkg.versionInstalled ? (
                             <code
@@ -624,41 +890,22 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                           )}
                         </td>
 
-                        {/* Column 5: Provenance Status */}
+                        {/* Column 6: Source Usages (GT-014) */}
                         <td style={{ padding: '10px 10px' }}>
-                          {hasConflict ? (
+                          {usages.length > 0 ? (
                             <span
                               style={{
                                 fontSize: 11,
                                 padding: '2px 8px',
                                 borderRadius: 4,
-                                background: 'rgba(239, 68, 68, 0.15)',
-                                color: 'var(--danger-red, #ef4444)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
+                                background: 'var(--blue-selection-bg)',
+                                color: 'var(--primary-blue)',
                                 fontWeight: 600,
                               }}
                             >
-                              <AlertTriangle size={12} /> Conflict
+                              {usages.length} usage{usages.length === 1 ? '' : 's'}
                             </span>
-                          ) : pkg.versionResolved ? (
-                            <span
-                              style={{
-                                fontSize: 11,
-                                padding: '2px 8px',
-                                borderRadius: 4,
-                                background: 'rgba(16, 185, 129, 0.12)',
-                                color: 'var(--success-teal)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                fontWeight: 500,
-                              }}
-                            >
-                              <CheckCircle2 size={12} /> {pkg.isDirect ? 'Resolved' : 'Transitive'}
-                            </span>
-                          ) : (
+                          ) : pkg.isDirect ? (
                             <span
                               style={{
                                 fontSize: 11,
@@ -666,27 +913,27 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                                 borderRadius: 4,
                                 background: 'rgba(245, 158, 11, 0.12)',
                                 color: 'var(--warning-amber)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
                                 fontWeight: 500,
                               }}
+                              title="Declared in manifest, but zero imports detected in analyzed source files"
                             >
-                              <AlertCircle size={12} /> Declared Only
+                              0 (unreferenced)
                             </span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>transitive</span>
                           )}
                         </td>
 
-                        {/* Column 6: Action */}
+                        {/* Column 7: Action */}
                         <td style={{ padding: '10px 10px', textAlign: 'right' }}>
                           <button
                             className="tool-btn"
                             style={{ fontSize: 11, padding: '3px 8px' }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedDep(isSelected ? null : pkg);
+                              handleSelectPackage(isSelected ? null : pkg.id);
                             }}
-                            aria-label={`Inspect provenance for ${pkg.name}`}
+                            aria-label={`Inspect ${pkg.name}`}
                           >
                             {isSelected ? 'Close' : 'Inspect'}
                           </button>
@@ -700,202 +947,21 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
           )}
         </div>
 
-        {/* Inspectable Package Provenance Drawer / Modal */}
-        {selectedDep && (
-          <div
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--primary-blue)',
-              borderRadius: 'var(--radius-md)',
-              padding: 20,
-              boxShadow: 'var(--shadow-md)',
-              position: 'relative',
-            }}
-            role="region"
-            aria-label={`Provenance details for ${selectedDep.name}`}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Package size={18} color="var(--primary-blue)" />
-                <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>
-                  Provenance Inspector: {selectedDep.name}
-                </h3>
-                <span className="kind-badge route">{selectedDep.ecosystem}</span>
-                <span className="kind-badge function">{selectedDep.packageManager}</span>
-              </div>
-              <button
-                className="tool-btn"
-                style={{ padding: '4px 8px' }}
-                onClick={() => setSelectedDep(null)}
-                aria-label="Close inspector"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Conflict Alert Banner if any */}
-            {selectedDep.provenance?.hasConflict && (
-              <div
-                style={{
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: 12,
-                  marginBottom: 16,
-                  color: 'var(--danger-red, #ef4444)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                  <AlertTriangle size={16} /> Provenance Conflict Detected
-                </div>
-                {selectedDep.provenance.conflicts.map((conf, idx) => (
-                  <div key={idx} style={{ fontSize: 12, marginTop: 4 }}>
-                    • {conf.message}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 3 Pillars of Version Provenance */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
-              {/* 1. Declared Version Card */}
-              <div
-                style={{
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: 14,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
-                  <FileCode size={14} color="var(--primary-blue)" /> Manifest Declared
-                </div>
-                <div style={{ fontSize: 18, fontWeight: 700, marginTop: 8, color: 'var(--text-primary)' }}>
-                  {selectedDep.versionDeclared || 'None (Transitive)'}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-                  Source: <code>{selectedDep.manifestPath}</code>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  Specification Kind:{' '}
-                  <strong>{selectedDep.provenance?.declared.isExactPin ? 'Exact Pin' : 'Version Range'}</strong>
-                </div>
-              </div>
-
-              {/* 2. Resolved Version Card */}
-              <div
-                style={{
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: 14,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
-                  <CheckCircle2 size={14} color="var(--success-teal)" /> Lockfile Resolved
-                </div>
-                <div
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 700,
-                    marginTop: 8,
-                    color: selectedDep.versionResolved ? 'var(--success-teal)' : 'var(--warning-amber)',
-                  }}
-                >
-                  {selectedDep.versionResolved || 'Unavailable'}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-                  Source:{' '}
-                  {selectedDep.lockfilePath ? (
-                    <code>{selectedDep.lockfilePath}</code>
-                  ) : (
-                    <span style={{ color: 'var(--warning-amber)' }}>No lockfile found</span>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  Status: <strong>{selectedDep.provenance?.resolved.status || 'unavailable'}</strong>
-                </div>
-              </div>
-
-              {/* 3. Installed Version Card */}
-              <div
-                style={{
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: 14,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
-                  <HardDrive size={14} color="var(--primary-blue)" /> Installed Disk
-                </div>
-                <div
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 700,
-                    marginTop: 8,
-                    color: selectedDep.versionInstalled ? 'var(--primary-blue)' : 'var(--text-muted)',
-                  }}
-                >
-                  {selectedDep.versionInstalled || 'Unavailable'}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-                  Source:{' '}
-                  {selectedDep.provenance?.installed.sourceFilePath ? (
-                    <code>{selectedDep.provenance.installed.sourceFilePath}</code>
-                  ) : (
-                    <span>No installed environment detected in input</span>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  Status: <strong>{selectedDep.provenance?.installed.status || 'unavailable'}</strong>
-                </div>
-              </div>
-            </div>
-
-            {/* Evidence Audit Trail */}
-            <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>
-                Evidence Audit Trail ({selectedDep.evidence.length} items)
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {selectedDep.evidence.map((ev, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: 'var(--bg-primary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 'var(--radius-sm)',
-                      padding: '8px 12px',
-                      fontSize: 11,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                    }}
-                  >
-                    <div>
-                      <strong style={{ color: 'var(--text-primary)' }}>{ev.sourceFilePath}</strong>
-                      <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
-                        ({ev.sourceKind} • {ev.evidenceKind})
-                      </span>
-                      {ev.rawSpecifier && (
-                        <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-                          Specifier: <code>{ev.rawSpecifier}</code>
-                        </div>
-                      )}
-                    </div>
-                    {ev.integrity && (
-                      <span style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text-muted)' }}>
-                        Integrity: {ev.integrity.slice(0, 32)}...
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+        {/* Integrated Package Inspector (GT-015) */}
+        {activeSelectedId && (
+          <PackageInspector
+            packageNode={selectedPackageNode}
+            dependency={selectedDep}
+            graph={depScan?.graph}
+            sourceUsages={
+              depScan?.sourceUsages?.[selectedDep?.id || ''] ||
+              depScan?.sourceUsages?.[activeSelectedId] ||
+              []
+            }
+            onSelectPackage={handleSelectPackage}
+            onClose={() => handleSelectPackage(null)}
+            onOpenSourceLocation={onOpenSourceLocation}
+          />
         )}
 
         {/* Diagnostics & Ingestion Warnings */}

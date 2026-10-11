@@ -249,6 +249,8 @@ export interface DependencyScanResult {
   workspaces: WorkspaceDescriptor[];
   dependencies: NormalizedDependency[];
   diagnostics: ManifestDiagnostic[];
+  graph?: PackageDependencyGraph;
+  sourceUsages?: Record<string, PackageSourceUsage[]>; // Keyed by packageId
   stats: {
     totalManifests: number;
     totalLockfiles: number;
@@ -260,6 +262,131 @@ export interface DependencyScanResult {
     declaredOnlyCount: number;
     withInstalledVersionCount: number;
     conflictsCount: number;
+    totalSourceUsagesCount?: number;
+    unreferencedPackagesCount?: number;
   };
   capabilityMatrix: EcosystemCapability[];
 }
+
+/**
+ * Typed edge relationship kinds for package dependency graph (GT-013)
+ */
+export type PackageDependencyEdgeType =
+  | 'runtime' // Direct runtime production dependency
+  | 'dev' // Development dependency
+  | 'peer' // Peer dependency
+  | 'optional' // Optional dependency
+  | 'transitive' // Transitive resolution edge (parent package -> child dependency)
+  | 'workspace'; // Monorepo inter-workspace sibling reference
+
+/**
+ * Node in the typed package dependency graph (GT-013)
+ */
+export interface PackageDependencyNode {
+  id: string; // Unique stable identifier: pkg:${ecosystem}:${name}@${version || 'declared'}:${manifestPath}
+  name: string;
+  ecosystem: EcosystemType;
+  packageManager: PackageManagerType;
+  versionDeclared?: string;
+  versionResolved?: string;
+  versionInstalled?: string;
+  alias?: string;
+  scope: DependencyScope;
+  isDirect: boolean;
+  isTransitive: boolean;
+  manifestPath: string;
+  lockfilePath?: string;
+  workspacePath?: string;
+  provenance?: DependencyVersionProvenance;
+  dependenciesCount: number;
+  dependentsCount: number;
+  sourceUsagesCount: number;
+  health: DependencyHealthIndicator;
+}
+
+/**
+ * Typed edge in the package dependency graph (GT-013)
+ */
+export interface PackageDependencyEdge {
+  id: string; // ${sourceId}->${targetId}:${type}
+  source: string;
+  target: string;
+  type: PackageDependencyEdgeType;
+  isTransitive: boolean;
+  versionRange?: string;
+  resolvedVersion?: string;
+  sourceFilePath: string;
+}
+
+/**
+ * Typed Package Dependency Graph model (GT-013)
+ */
+export interface PackageDependencyGraph {
+  nodes: Record<string, PackageDependencyNode>;
+  edges: PackageDependencyEdge[];
+  rootNodeIds: string[]; // Direct manifest dependencies
+  stats: {
+    totalNodes: number;
+    totalEdges: number;
+    directCount: number;
+    transitiveCount: number;
+    multiVersionCount: number;
+  };
+}
+
+/**
+ * Mapping of third-party package to source-code usage (GT-014)
+ */
+export interface PackageSourceUsage {
+  id: string; // Unique stable usage ID: ${packageId}#${filePath}:${startLine}
+  packageId: string;
+  packageName: string;
+  ecosystem: EcosystemType;
+  filePath: string;
+  location: {
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+  };
+  importedSymbol?: string; // e.g. "useState", "default", "*", "Router"
+  localAlias?: string; // e.g. "React", "get"
+  snippet?: string;
+  sourceSnippet?: string;
+  enclosingEntityId?: string; // ID of AST entity enclosing this import/reference
+  enclosingEntityName?: string;
+  confidence: 'static_import' | 'dynamic_require' | 'subpath_import' | 'uncertain_alias';
+  isDirectImport: boolean;
+  evidenceNote: string;
+}
+
+/**
+ * Evidence-backed health signal kinds (GT-016)
+ */
+export type DependencyHealthSignalKind =
+  | 'clean' // Verified against lockfile with matching range
+  | 'unlocked' // Missing lockfile resolution
+  | 'conflict' // Range mismatch or workspace version conflict
+  | 'duplicate' // Multiple versions present across workspaces
+  | 'stale_disk' // Installed disk version disagrees with lockfile
+  | 'unreferenced'; // Declared in manifest but zero source usages found
+
+export interface DependencyHealthSignal {
+  kind: DependencyHealthSignalKind;
+  severity: 'healthy' | 'warning' | 'error' | 'info';
+  title: string;
+  message: string;
+  evidencePath?: string;
+  evidenceSnippet?: string;
+}
+
+export interface DependencyHealthIndicator {
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  signals: DependencyHealthSignal[];
+  hasConflict: boolean;
+  isUnreferenced: boolean;
+  isUnlocked: boolean;
+  isDuplicate: boolean;
+}
+

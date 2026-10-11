@@ -478,7 +478,11 @@ export default function TraceHomePage() {
                 {/* 7. DEPENDENCIES VIEW */}
                 <div style={{ width: '100%', height: '100%', display: activeTab === 'dependencies' ? 'block' : 'none' }}>
                   {visitedTabs.has('dependencies') && (
-                    <DependencyInventoryView analysis={analysis} />
+                    <DependencyInventoryView
+                      analysis={analysis}
+                      selectedPackageId={selectedEntityId}
+                      onSelectPackage={handleEntitySelect}
+                    />
                   )}
                 </div>
 
