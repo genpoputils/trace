@@ -2,7 +2,6 @@ import {
   ProjectAnalysis,
   ImpactReport,
   ImpactItem,
-  TraceEntity,
 } from '../types/trace';
 
 export class ImpactAnalysisService {

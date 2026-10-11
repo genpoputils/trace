@@ -5,7 +5,6 @@ import {
   TraceEntity,
   TraceRelationship,
   AnalysisWarning,
-  EntityKind,
 } from '../types/trace';
 import { TypeScriptAdapter, FileAnalysisOutput } from './typescript-adapter';
 
@@ -141,8 +140,7 @@ export class CodebaseAnalyzer {
           sourceModule,
           symbolName,
           files,
-          fileOutputs,
-          allEntities
+          fileOutputs
         );
 
         if (resolvedTargetId && allEntities[resolvedTargetId]) {
@@ -319,8 +317,7 @@ export class CodebaseAnalyzer {
     moduleSpecifier: string,
     symbolName: string,
     files: Record<string, FileRecord>,
-    fileOutputs: Record<string, FileAnalysisOutput>,
-    allEntities: Record<string, TraceEntity>
+    fileOutputs: Record<string, FileAnalysisOutput>
   ): string | null {
     if (!moduleSpecifier.startsWith('.')) {
       return null;

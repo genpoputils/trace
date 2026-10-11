@@ -1,18 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   X,
-  GitBranch,
   FolderGit2,
-  Lock,
   Globe,
   RefreshCw,
   AlertTriangle,
   CheckCircle2,
-  ExternalLink,
-  Code2,
-  Key,
   HelpCircle,
   Play,
   Download,
@@ -37,8 +32,6 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'connect' | 'public' | 'setup'>('connect');
 
-  // Auth & Connection State
-  const [authStatus, setAuthStatus] = useState<any>(null);
   const [personalToken, setPersonalToken] = useState<string>('');
 
   // Repos & Branches
@@ -64,26 +57,25 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [lastAttemptedRepo, setLastAttemptedRepo] = useState<{ owner: string; repo: string; branch: string } | null>(null);
 
-  const mouseDownOnOverlayRef = React.useRef(false);
-  const activePollRef = React.useRef<NodeJS.Timeout | null>(null);
+  const mouseDownOnOverlayRef = useRef(false);
+  const activePollRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Clean up polling on unmount
-  useEffect(() => {
-    return () => {
-      if (activePollRef.current) clearInterval(activePollRef.current);
-    };
-  }, []);
-
-  // Check status on open
-  useEffect(() => {
-    if (isOpen) {
-      const status = browserGitHubClient.getAuthStatus(personalToken || undefined);
-      setAuthStatus(status);
-      fetchRepos();
+  const fetchBranches = useCallback(async (owner: string, repo: string, token?: string) => {
+    setLoadingBranches(true);
+    try {
+      const branchList = await browserGitHubClient.listBranches(owner, repo, token || personalToken || undefined);
+      setBranches(branchList);
+      if (branchList.length > 0) {
+        setSelectedBranch(branchList[0].name);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingBranches(false);
     }
-  }, [isOpen]);
+  }, [personalToken]);
 
-  const fetchRepos = async (token?: string) => {
+  const fetchRepos = useCallback(async (token?: string) => {
     setLoadingRepos(true);
     setError(null);
     try {
@@ -99,22 +91,25 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
     } finally {
       setLoadingRepos(false);
     }
-  };
+  }, [personalToken, fetchBranches]);
 
-  const fetchBranches = async (owner: string, repo: string, token?: string) => {
-    setLoadingBranches(true);
-    try {
-      const branchList = await browserGitHubClient.listBranches(owner, repo, token || personalToken || undefined);
-      setBranches(branchList);
-      if (branchList.length > 0) {
-        setSelectedBranch(branchList[0].name);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingBranches(false);
+  // Clean up polling on unmount
+  useEffect(() => {
+    const pollId = activePollRef.current;
+    return () => {
+      if (pollId) clearInterval(pollId);
+    };
+  }, []);
+
+  // Fetch repos on modal open
+  useEffect(() => {
+    if (isOpen) {
+      const timer = setTimeout(() => {
+        fetchRepos();
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  };
+  }, [isOpen, fetchRepos]);
 
   const handleSelectRepo = (fullName: string) => {
     setSelectedRepoFullName(fullName);

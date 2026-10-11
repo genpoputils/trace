@@ -17,7 +17,7 @@ const SUPPORTED_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 async function testOptimized() {
   console.log('Downloading immich archive...');
   const t0 = performance.now();
-  const { buffer, commitSha } = await githubClient.downloadRepoArchive('immich-app', 'immich', 'main');
+  const { buffer } = await githubClient.downloadRepoArchive('immich-app', 'immich', 'main');
   console.log(`Downloaded in ${((performance.now() - t0) / 1000).toFixed(2)}s.`);
 
   console.log('Decompressing and filtering source files...');

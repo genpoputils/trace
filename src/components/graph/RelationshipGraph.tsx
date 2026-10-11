@@ -41,8 +41,15 @@ interface RelationshipGraphProps {
   focusEntityId?: string | null;
 }
 
+interface CustomTraceNodeData {
+  entity: TraceEntity;
+  onExpand?: (entityId: string) => void;
+  neighborCount?: number;
+  isExpanded?: boolean;
+}
+
 // Custom Node Card Component
-function CustomTraceNode({ data, selected }: { data: any; selected?: boolean }) {
+function CustomTraceNode({ data, selected }: { data: CustomTraceNodeData; selected?: boolean }) {
   const entity: TraceEntity = data.entity;
   const onExpand = data.onExpand;
   const neighborCount = data.neighborCount || 0;
@@ -172,14 +179,14 @@ function RelationshipGraphContent({
   focusEntityId,
 }: RelationshipGraphProps) {
   const { fitView } = useReactFlow();
-  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
   const lastTopologyKeyRef = useRef<string>('');
-
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
   // Reset expanded nodes when switching projects
-  useEffect(() => {
+  const [prevProjectId, setPrevProjectId] = useState(analysis.projectId);
+  if (prevProjectId !== analysis.projectId) {
+    setPrevProjectId(analysis.projectId);
     setExpandedNodeIds(new Set());
-    lastTopologyKeyRef.current = '';
-  }, [analysis.projectId]);
+  }
 
   const toggleExpandNode = useCallback((entityId: string) => {
     setExpandedNodeIds((prev) => {

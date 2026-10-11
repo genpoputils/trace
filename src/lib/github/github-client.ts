@@ -5,6 +5,23 @@ import {
   GitHubAuthStatus,
 } from './types';
 
+interface GitHubApiRawRepo {
+  id: number;
+  name: string;
+  full_name: string;
+  owner?: { login?: string; avatar_url?: string };
+  private?: boolean;
+  description?: string | null;
+  default_branch?: string;
+  html_url: string;
+  updated_at: string;
+}
+
+interface GitHubApiRawBranch {
+  name: string;
+  commit?: { sha?: string };
+}
+
 export class GitHubClient {
   private clientId: string;
   private clientSecret: string;
@@ -97,10 +114,10 @@ export class GitHubClient {
       throw new Error(`GitHub API error: HTTP ${res.status}`);
     }
 
-    const rawList = await res.json();
+    const rawList = (await res.json()) as GitHubApiRawRepo[];
     if (!Array.isArray(rawList)) return [];
 
-    return rawList.map((r: any) => ({
+    return rawList.map((r: GitHubApiRawRepo) => ({
       id: r.id,
       name: r.name,
       fullName: r.full_name,
@@ -109,7 +126,7 @@ export class GitHubClient {
         avatarUrl: r.owner?.avatar_url,
       },
       private: !!r.private,
-      description: r.description,
+      description: r.description || undefined,
       defaultBranch: r.default_branch || 'main',
       htmlUrl: r.html_url,
       updatedAt: r.updated_at,
@@ -166,10 +183,10 @@ export class GitHubClient {
       throw new Error(`Failed to list branches for '${owner}/${repo}': HTTP ${res.status}`);
     }
 
-    const rawList = await res.json();
+    const rawList = (await res.json()) as GitHubApiRawBranch[];
     if (!Array.isArray(rawList)) return [];
 
-    return rawList.map((b: any) => ({
+    return rawList.map((b: GitHubApiRawBranch) => ({
       name: b.name,
       commitSha: b.commit?.sha || '',
     }));

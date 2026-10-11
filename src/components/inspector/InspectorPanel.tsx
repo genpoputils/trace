@@ -5,16 +5,10 @@ import { ProjectAnalysis, TraceEntity } from '@/lib/types/trace';
 import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 import {
   X,
-  FileCode,
-  Layers,
   Sparkles,
-  ExternalLink,
-  ChevronRight,
-  ArrowRight,
   Send,
   RefreshCw,
   CheckCircle,
-  HelpCircle,
 } from 'lucide-react';
 
 interface InspectorPanelProps {
@@ -54,9 +48,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       (r) => r.sourceId === selectedEntityId && (r.kind === 'calls' || r.kind === 'routes_to' || r.kind === 'reads_from')
     );
   }, [analysis, selectedEntityId]);
-
-  // File record for full source code viewing
-  const fileRecord = entity ? analysis.files[entity.filePath] : undefined;
 
   // Run local AI investigation
   const handleAskAI = async (questionText: string) => {

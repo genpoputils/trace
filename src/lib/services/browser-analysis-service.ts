@@ -23,8 +23,16 @@ export type ProgressCallback = (
   progress: { current: number; total: number; message: string }
 ) => void;
 
+export interface AnalysisWorkerLike {
+  postMessage: (message: WorkerRequest, transfer?: Transferable[]) => void;
+  terminate?: () => void;
+  onmessage?: ((event: MessageEvent<WorkerResponse>) => void) | null;
+  onerror?: ((event: unknown) => void) | null;
+  onmessageerror?: ((event: unknown) => void) | null;
+}
+
 export class BrowserAnalysisService {
-  private worker: Worker | null = null;
+  private worker: Worker | AnalysisWorkerLike | null = null;
   private workerAvailable: boolean = false;
   private activeJobs: Map<
     string,
@@ -48,43 +56,105 @@ export class BrowserAnalysisService {
     this.initWorker();
   }
 
+  private failAllPendingJobs(error: Error) {
+    if (this.activeJobs.size === 0) return;
+    const pending = Array.from(this.activeJobs.values());
+    this.activeJobs.clear();
+    for (const job of pending) {
+      try {
+        job.reject(error);
+      } catch {
+        // Prevent unhandled throw during iteration
+      }
+    }
+  }
+
+  public terminateWorker(reason: string = 'Web Worker terminated.'): void {
+    if (this.worker) {
+      try {
+        this.worker.terminate?.();
+      } catch {
+        // ignore
+      }
+      this.worker = null;
+    }
+    this.workerAvailable = false;
+    this.failAllPendingJobs(new Error(reason));
+  }
+
+  public getActiveJobsCount(): number {
+    return this.activeJobs.size;
+  }
+
+  public isWorkerAvailable(): boolean {
+    return this.workerAvailable;
+  }
+
+  public attachWorker(workerInstance: AnalysisWorkerLike | null): void {
+    if (this.worker) {
+      try {
+        this.worker.terminate?.();
+      } catch {}
+    }
+    this.worker = workerInstance;
+    this.workerAvailable = !!workerInstance;
+    if (workerInstance) {
+      this.setupWorkerHandlers(workerInstance);
+    }
+  }
+
+  private setupWorkerHandlers(worker: AnalysisWorkerLike) {
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const msg = event.data;
+      if (!msg || !msg.id) return;
+
+      const job = this.activeJobs.get(msg.id);
+      if (!job) return;
+
+      if (msg.type === 'PROGRESS') {
+        job.onProgress?.(msg.stage, msg.progress);
+      } else if (msg.type === 'RESULT') {
+        this.activeJobs.delete(msg.id);
+        job.resolve({
+          analysis: msg.analysis,
+          skippedFiles: msg.skippedFiles,
+          warnings: msg.warnings,
+        });
+      } else if (msg.type === 'ERROR') {
+        this.activeJobs.delete(msg.id);
+        job.reject(new Error(msg.error));
+      }
+    };
+
+    worker.onerror = (err: unknown) => {
+      let msg = 'Web Worker error occurred during analysis.';
+      if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+        msg = (err as { message: string }).message;
+      } else if (typeof err === 'string') {
+        msg = err;
+      }
+      console.warn('Trace: Web Worker error, settling all pending analysis jobs:', msg);
+      this.terminateWorker(`Web Worker error: ${msg}`);
+    };
+
+    worker.onmessageerror = (err: unknown) => {
+      console.warn('Trace: Web Worker message deserialization error:', err);
+      this.terminateWorker('Web Worker message deserialization error occurred.');
+    };
+  }
+
   private initWorker() {
     if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
       try {
-        this.worker = new Worker(new URL('../worker/analysis.worker.ts', import.meta.url), {
+        const worker = new Worker(new URL('../worker/analysis.worker.ts', import.meta.url), {
           type: 'module',
         });
-
-        this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-          const msg = event.data;
-          if (!msg || !msg.id) return;
-
-          const job = this.activeJobs.get(msg.id);
-          if (!job) return;
-
-          if (msg.type === 'PROGRESS') {
-            job.onProgress?.(msg.stage, msg.progress);
-          } else if (msg.type === 'RESULT') {
-            this.activeJobs.delete(msg.id);
-            job.resolve({
-              analysis: msg.analysis,
-              skippedFiles: msg.skippedFiles,
-              warnings: msg.warnings,
-            });
-          } else if (msg.type === 'ERROR') {
-            this.activeJobs.delete(msg.id);
-            job.reject(new Error(msg.error));
-          }
-        };
-
-        this.worker.onerror = (err) => {
-          console.warn('Trace: Web Worker error, falling back to main thread execution:', err);
-          this.workerAvailable = false;
-        };
-
+        this.worker = worker;
         this.workerAvailable = true;
+        this.setupWorkerHandlers(worker as unknown as AnalysisWorkerLike);
       } catch (err) {
         console.warn('Trace: Web Worker initialization not supported, using main thread fallback:', err);
+        this.worker = null;
         this.workerAvailable = false;
       }
     }
@@ -131,8 +201,13 @@ export class BrowserAnalysisService {
           fileName,
           options,
         };
-        // Transfer ArrayBuffer for zero-copy high performance
-        this.worker!.postMessage(req, [arrayBuffer]);
+        try {
+          // Transfer ArrayBuffer for zero-copy high performance
+          this.worker!.postMessage(req, [arrayBuffer]);
+        } catch (postErr) {
+          this.activeJobs.delete(jobId);
+          reject(postErr instanceof Error ? postErr : new Error(String(postErr)));
+        }
       });
     } else {
       // Main-thread fallback (Node tests or restricted environments)

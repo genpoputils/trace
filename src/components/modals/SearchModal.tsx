@@ -5,8 +5,6 @@ import { ProjectAnalysis, SearchResult, EntityKind } from '@/lib/types/trace';
 import {
   Search,
   X,
-  Code2,
-  Route,
   ArrowRight,
 } from 'lucide-react';
 import { browserAnalysisService } from '@/lib/services/browser-analysis-service';

@@ -1,9 +1,6 @@
 import {
   ProjectAnalysis,
   TraceEntity,
-  ExecutionPath,
-  DataFlowTrace,
-  ImpactReport,
 } from '../types/trace';
 import { ExecutionPathEngine } from '../tracing/execution-path';
 import { DataFlowEngine } from '../dataflow/dataflow';
@@ -123,9 +120,6 @@ export class AIInvestigatorService {
         }
       }
     }
-
-    // If an external LLM key is configured in env
-    const apiKey = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY;
 
     // Deterministic Offline Grounded Investigator
     // Synthesize factual, verified answer from AST and graph

@@ -2,6 +2,7 @@ import { githubClient } from '@/lib/github/github-client';
 import { ZipIngestionService } from '@/lib/ingestion/zip-ingestion';
 import { CodebaseAnalyzer } from '@/lib/analyzer/codebase-analyzer';
 import { projectStore } from '@/lib/storage/project-store';
+import { ProjectAnalysis } from '@/lib/types/trace';
 
 export type JobStage =
   | 'queued'
@@ -30,7 +31,7 @@ export interface AnalysisJob {
   projectId?: string;
   commitSha?: string;
   shortSha?: string;
-  stats?: any;
+  stats?: ProjectAnalysis['stats'];
   warnings?: string[];
   startedAt: number;
   updatedAt: number;

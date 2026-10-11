@@ -122,12 +122,16 @@ export class TypeScriptAdapter {
 
     // Helper to extract JSDoc
     const getJSDoc = (node: ts.Node): string | undefined => {
-      // @ts-expect-error jsDoc is on node
-      const jsDoc = node.jsDoc as { comment?: string | unknown[] }[] | undefined;
+      const nodeWithJsDoc = node as ts.Node & { jsDoc?: { comment?: string | unknown[] }[] };
+      const jsDoc = nodeWithJsDoc.jsDoc;
       if (jsDoc && jsDoc.length > 0) {
         const comment = jsDoc[0].comment;
         if (typeof comment === 'string') return comment;
-        if (Array.isArray(comment)) return comment.map((c: any) => (c?.text ? c.text : '')).join('');
+        if (Array.isArray(comment)) {
+          return comment
+            .map((c: unknown) => (typeof c === 'object' && c !== null && 'text' in c ? String((c as { text: unknown }).text) : ''))
+            .join('');
+        }
       }
       return undefined;
     };
@@ -169,7 +173,9 @@ export class TypeScriptAdapter {
               isExported: true,
               framework: 'express',
               metadata: {
-                httpMethod: methodName.toUpperCase() as any,
+                httpMethod: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'ALL', 'USE'].includes(methodName.toUpperCase())
+                  ? (methodName.toUpperCase() as NonNullable<TraceEntity['metadata']>['httpMethod'])
+                  : undefined,
                 routePath,
               },
             };
@@ -344,7 +350,12 @@ export class TypeScriptAdapter {
           isAsync,
           framework,
           metadata: isNextRoute
-            ? { httpMethod: name as any, routePath: filePath }
+            ? {
+                httpMethod: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'ALL', 'USE'].includes(name.toUpperCase())
+                  ? (name.toUpperCase() as NonNullable<TraceEntity['metadata']>['httpMethod'])
+                  : undefined,
+                routePath: filePath,
+              }
             : undefined,
         };
 

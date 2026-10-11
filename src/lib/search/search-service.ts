@@ -1,6 +1,5 @@
 import {
   ProjectAnalysis,
-  TraceEntity,
   SearchResult,
   SearchQuery,
 } from '../types/trace';

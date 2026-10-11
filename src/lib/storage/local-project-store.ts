@@ -32,10 +32,10 @@ export interface ProjectSummary {
 /**
  * Local-First Browser Project Store
  * Multi-tier storage: In-Memory Fast Cache -> IndexedDB Persistent Storage
- * Gracefully degrades to purely in-memory if IndexedDB is unavailable or restricted.
+ * Validates schema and analyzer versions; invalidates stale/incompatible entries.
  */
 export class LocalProjectStore {
-  private inMemoryCache: Map<string, ProjectAnalysis> = new Map();
+  private inMemoryCache: Map<string, StoredProjectRecord> = new Map();
   private dbPromise: Promise<IDBDatabase | null> | null = null;
   private isIndexedDBAvailable: boolean;
 
@@ -83,9 +83,17 @@ export class LocalProjectStore {
     return this.dbPromise;
   }
 
+  public isRecordCompatible(record?: { schemaVersion?: number; analyzerVersion?: string } | null): boolean {
+    if (!record) return false;
+    return (
+      record.schemaVersion === STORAGE_SCHEMA_VERSION &&
+      record.analyzerVersion === CURRENT_ANALYZER_VERSION
+    );
+  }
+
   public getSampleProject(): ProjectAnalysis {
     const cached = this.inMemoryCache.get('sample-ecommerce-api');
-    if (cached) return cached;
+    if (cached && this.isRecordCompatible(cached)) return cached.analysis;
 
     const analyzer = new CodebaseAnalyzer();
     const analysis = analyzer.analyzeProject(
@@ -93,6 +101,7 @@ export class LocalProjectStore {
       SAMPLE_ECOMMERCE_API
     );
     analysis.projectId = 'sample-ecommerce-api';
+    analysis.version = CURRENT_ANALYZER_VERSION;
     analysis.gitMetadata = {
       owner: 'genpoputils',
       repo: 'ecommerce-core',
@@ -102,11 +111,21 @@ export class LocalProjectStore {
       repoUrl: 'https://github.com/genpoputils/ecommerce-core',
     };
 
-    this.cacheInMemory(analysis.projectId, analysis);
+    const record: StoredProjectRecord = {
+      schemaVersion: STORAGE_SCHEMA_VERSION,
+      analyzerVersion: CURRENT_ANALYZER_VERSION,
+      projectId: analysis.projectId,
+      projectName: analysis.projectName,
+      revisionKey: 'genpoputils/ecommerce-core@c8f12a9e3d842bfb8291c94d01bfa5e998184d02',
+      analyzedAt: analysis.analyzedAt,
+      analysis,
+    };
+
+    this.cacheInMemory(analysis.projectId, record);
     return analysis;
   }
 
-  private cacheInMemory(projectId: string, analysis: ProjectAnalysis) {
+  private cacheInMemory(projectId: string, record: StoredProjectRecord) {
     if (this.inMemoryCache.size >= MAX_IN_MEMORY_PROJECTS) {
       // Evict oldest non-sample entry
       for (const key of this.inMemoryCache.keys()) {
@@ -116,18 +135,17 @@ export class LocalProjectStore {
         }
       }
     }
-    this.inMemoryCache.set(projectId, analysis);
+    this.inMemoryCache.set(projectId, record);
   }
 
-  public async saveProject(analysis: ProjectAnalysis): Promise<void> {
+  public async saveProject(
+    analysis: ProjectAnalysis,
+    analyzerVersion: string = CURRENT_ANALYZER_VERSION,
+    schemaVersion: number = STORAGE_SCHEMA_VERSION
+  ): Promise<void> {
     if (!analysis.projectId) {
       throw new Error('Analysis must have a valid projectId');
     }
-
-    this.cacheInMemory(analysis.projectId, analysis);
-
-    const db = await this.openDb();
-    if (!db) return;
 
     let revisionKey: string | undefined;
     if (analysis.gitMetadata?.owner && analysis.gitMetadata?.repo && analysis.gitMetadata?.commitSha) {
@@ -135,14 +153,22 @@ export class LocalProjectStore {
     }
 
     const record: StoredProjectRecord = {
-      schemaVersion: STORAGE_SCHEMA_VERSION,
-      analyzerVersion: CURRENT_ANALYZER_VERSION,
+      schemaVersion,
+      analyzerVersion,
       projectId: analysis.projectId,
       projectName: analysis.projectName,
       revisionKey,
       analyzedAt: analysis.analyzedAt,
-      analysis,
+      analysis: {
+        ...analysis,
+        version: analyzerVersion,
+      },
     };
+
+    this.cacheInMemory(analysis.projectId, record);
+
+    const db = await this.openDb();
+    if (!db) return;
 
     return new Promise((resolve) => {
       try {
@@ -164,7 +190,14 @@ export class LocalProjectStore {
   public async getProject(projectId: string): Promise<ProjectAnalysis | null> {
     // 1. Fast in-memory check
     if (this.inMemoryCache.has(projectId)) {
-      return this.inMemoryCache.get(projectId)!;
+      const memRecord = this.inMemoryCache.get(projectId)!;
+      if (this.isRecordCompatible(memRecord)) {
+        return memRecord.analysis;
+      }
+      // Incompatible in memory: invalidate from memory & IndexedDB
+      this.inMemoryCache.delete(projectId);
+      await this.deleteFromDb(projectId);
+      return null;
     }
 
     if (projectId === 'sample-ecommerce-api') {
@@ -177,19 +210,25 @@ export class LocalProjectStore {
 
     return new Promise((resolve) => {
       try {
-        const tx = db.transaction(STORE_PROJECTS, 'readonly');
+        const tx = db.transaction(STORE_PROJECTS, 'readwrite');
         const store = tx.objectStore(STORE_PROJECTS);
         const req = store.get(projectId);
 
         req.onsuccess = () => {
           const record = req.result as StoredProjectRecord | undefined;
           if (record && record.analysis) {
-            // Verify schema compatibility
-            if (record.schemaVersion === STORAGE_SCHEMA_VERSION) {
-              this.cacheInMemory(projectId, record.analysis);
+            // Validate both schema and analyzer versions
+            if (this.isRecordCompatible(record)) {
+              this.cacheInMemory(projectId, record);
               resolve(record.analysis);
               return;
             }
+            // Incompatible in IndexedDB: invalidate and purge
+            store.delete(projectId);
+            this.inMemoryCache.delete(projectId);
+            console.info(
+              `Trace: Invalidated incompatible cached project '${projectId}' (schema: ${record.schemaVersion} vs ${STORAGE_SCHEMA_VERSION}, analyzer: ${record.analyzerVersion} vs ${CURRENT_ANALYZER_VERSION})`
+            );
           }
           resolve(null);
         };
@@ -214,13 +253,19 @@ export class LocalProjectStore {
     const targetKey = `${o}/${r}@${commitSha}`;
 
     // 1. Check in-memory
-    for (const project of this.inMemoryCache.values()) {
+    for (const [id, record] of Array.from(this.inMemoryCache.entries())) {
+      const project = record.analysis;
       if (
         project.gitMetadata?.owner?.toLowerCase() === o &&
         project.gitMetadata?.repo?.toLowerCase() === r &&
         project.gitMetadata?.commitSha === commitSha
       ) {
-        return project;
+        if (this.isRecordCompatible(record)) {
+          return project;
+        }
+        // Incompatible entry in memory: invalidate it
+        this.inMemoryCache.delete(id);
+        await this.deleteFromDb(id);
       }
     }
 
@@ -230,7 +275,7 @@ export class LocalProjectStore {
 
     return new Promise((resolve) => {
       try {
-        const tx = db.transaction(STORE_PROJECTS, 'readonly');
+        const tx = db.transaction(STORE_PROJECTS, 'readwrite');
         const store = tx.objectStore(STORE_PROJECTS);
         const index = store.index('revisionKey');
         const req = index.get(targetKey);
@@ -238,11 +283,20 @@ export class LocalProjectStore {
         req.onsuccess = () => {
           const record = req.result as StoredProjectRecord | undefined;
           if (record && record.analysis) {
-            this.cacheInMemory(record.projectId, record.analysis);
-            resolve(record.analysis);
-          } else {
-            resolve(null);
+            // Validate both schema and analyzer versions
+            if (this.isRecordCompatible(record)) {
+              this.cacheInMemory(record.projectId, record);
+              resolve(record.analysis);
+              return;
+            }
+            // Incompatible commit-based cache entry: invalidate and purge
+            store.delete(record.projectId);
+            this.inMemoryCache.delete(record.projectId);
+            console.info(
+              `Trace: Invalidated incompatible commit cache '${targetKey}' (schema: ${record.schemaVersion} vs ${STORAGE_SCHEMA_VERSION}, analyzer: ${record.analyzerVersion} vs ${CURRENT_ANALYZER_VERSION})`
+            );
           }
+          resolve(null);
         };
 
         req.onerror = () => resolve(null);
@@ -266,14 +320,17 @@ export class LocalProjectStore {
       isSample: true,
     });
 
-    // 2. Collect from in-memory cache
-    for (const p of this.inMemoryCache.values()) {
+    // 2. Collect from in-memory cache (filter out incompatible entries)
+    for (const rec of this.inMemoryCache.values()) {
+      if (!this.isRecordCompatible(rec)) continue;
+      const p = rec.analysis;
       summaries.set(p.projectId, {
         id: p.projectId,
         name: p.projectName,
         filesCount: p.stats.totalFiles,
         symbolsCount: p.stats.totalSymbols,
         analyzedAt: p.analyzedAt,
+        revisionKey: rec.revisionKey,
         isSample: p.projectId === 'sample-ecommerce-api',
       });
     }
@@ -283,7 +340,7 @@ export class LocalProjectStore {
     if (db) {
       await new Promise<void>((resolve) => {
         try {
-          const tx = db.transaction(STORE_PROJECTS, 'readonly');
+          const tx = db.transaction(STORE_PROJECTS, 'readwrite');
           const store = tx.objectStore(STORE_PROJECTS);
           const req = store.openCursor();
 
@@ -291,16 +348,23 @@ export class LocalProjectStore {
             const cursor = req.result;
             if (cursor) {
               const record = cursor.value as StoredProjectRecord;
-              if (record && record.analysis && !summaries.has(record.projectId)) {
-                summaries.set(record.projectId, {
-                  id: record.projectId,
-                  name: record.projectName,
-                  filesCount: record.analysis.stats?.totalFiles || 0,
-                  symbolsCount: record.analysis.stats?.totalSymbols || 0,
-                  analyzedAt: record.analyzedAt,
-                  revisionKey: record.revisionKey,
-                  isSample: record.projectId === 'sample-ecommerce-api',
-                });
+              if (record && record.analysis) {
+                if (this.isRecordCompatible(record)) {
+                  if (!summaries.has(record.projectId)) {
+                    summaries.set(record.projectId, {
+                      id: record.projectId,
+                      name: record.projectName,
+                      filesCount: record.analysis.stats?.totalFiles || 0,
+                      symbolsCount: record.analysis.stats?.totalSymbols || 0,
+                      analyzedAt: record.analyzedAt,
+                      revisionKey: record.revisionKey,
+                      isSample: record.projectId === 'sample-ecommerce-api',
+                    });
+                  }
+                } else {
+                  // Purge stale incompatible entry during listing
+                  cursor.delete();
+                }
               }
               cursor.continue();
             } else {
@@ -318,16 +382,9 @@ export class LocalProjectStore {
     return Array.from(summaries.values());
   }
 
-  public async deleteProject(projectId: string): Promise<boolean> {
-    if (projectId === 'sample-ecommerce-api') {
-      return false; // Preserve sample
-    }
-
-    this.inMemoryCache.delete(projectId);
-
+  private async deleteFromDb(projectId: string): Promise<boolean> {
     const db = await this.openDb();
     if (!db) return true;
-
     return new Promise((resolve) => {
       try {
         const tx = db.transaction(STORE_PROJECTS, 'readwrite');
@@ -339,6 +396,15 @@ export class LocalProjectStore {
         resolve(false);
       }
     });
+  }
+
+  public async deleteProject(projectId: string): Promise<boolean> {
+    if (projectId === 'sample-ecommerce-api') {
+      return false; // Preserve sample
+    }
+
+    this.inMemoryCache.delete(projectId);
+    return this.deleteFromDb(projectId);
   }
 
   public async clearAll(): Promise<void> {

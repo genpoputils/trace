@@ -16,10 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  verify:
+    name: Lint, Test & Static Export Verification
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -34,11 +32,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run ESLint
+        run: npm run lint
+
       - name: Run automated test suite
         run: npm test
 
-      - name: Build static export
+      - name: Build Next.js static export
+        env:
+          BASE_PATH: '/trace'
         run: npm run build
+
+      - name: Verify static export artifact
+        run: |
+          test -f out/index.html || { echo "Static export verification failed: missing out/index.html"; exit 1; }
+          test -d out/_next || { echo "Static export verification failed: missing out/_next directory"; exit 1; }
+          echo "Static export verified successfully."
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
@@ -48,6 +57,14 @@ jobs:
         with:
           path: './out'
 
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

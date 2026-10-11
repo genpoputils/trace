@@ -15,8 +15,8 @@ async function runBenchmark() {
   let archive: { buffer: Buffer; commitSha: string };
   try {
     archive = await githubClient.downloadRepoArchive('immich-app', 'immich', 'main');
-  } catch (err: any) {
-    console.error('Download failed:', err.message);
+  } catch (err: unknown) {
+    console.error('Download failed:', err instanceof Error ? err.message : String(err));
     return;
   }
   const t1 = performance.now();

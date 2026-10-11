@@ -2,8 +2,6 @@ import {
   ProjectAnalysis,
   ExecutionPath,
   ExecutionPathStep,
-  TraceEntity,
-  TraceRelationship,
 } from '../types/trace';
 
 export interface TraceOptions {
