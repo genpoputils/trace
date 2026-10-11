@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { ProjectAnalysis, EntityKind } from '@/lib/types/trace';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { ProjectAnalysis, EntityKind, TraceEntity } from '@/lib/types/trace';
 import { RelationshipGraph } from '@/components/graph/RelationshipGraph';
 import { ExecutionPathView } from '@/components/views/ExecutionPathView';
 import { DataFlowView } from '@/components/views/DataFlowView';
@@ -20,7 +20,6 @@ import {
   BarChart3,
   Search,
   Upload,
-  FolderGit2,
   GitBranch,
   GitCommit,
   Filter,
@@ -32,7 +31,6 @@ import {
   ChevronRight,
   ChevronDown,
   Layers,
-  Settings,
 } from 'lucide-react';
 
 function GitHubIcon({ size = 14 }: { size?: number }) {
@@ -52,6 +50,7 @@ export default function TraceHomePage() {
   const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'paths' | 'dataflow' | 'impact' | 'code' | 'ai' | 'settings'>('graph');
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['graph']));
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
@@ -68,6 +67,20 @@ export default function TraceHomePage() {
 
   // Available projects list
   const [projectsList, setProjectsList] = useState<{ id: string; name: string }[]>([]);
+
+  // Handle tab switching with lazy mounting and persistent tab tracking
+  const handleTabChange = useCallback(
+    (tab: 'overview' | 'graph' | 'paths' | 'dataflow' | 'impact' | 'code' | 'ai' | 'settings') => {
+      setActiveTab(tab);
+      setVisitedTabs((prev) => {
+        if (prev.has(tab)) return prev;
+        const next = new Set(prev);
+        next.add(tab);
+        return next;
+      });
+    },
+    []
+  );
 
   // Toggle Theme
   const toggleTheme = () => {
@@ -101,9 +114,10 @@ export default function TraceHomePage() {
         if (data.project) {
           setAnalysis(data.project);
           setCurrentProjectId(projectId);
+          setVisitedTabs(new Set([activeTab]));
           // Set initial selected entity to first route or central hub
-          const firstRoute = Object.values(data.project.entities as Record<string, any>).find(
-            (e: any) => e.kind === 'route'
+          const firstRoute = Object.values(data.project.entities as Record<string, TraceEntity>).find(
+            (e) => e.kind === 'route'
           );
           if (firstRoute) {
             setSelectedEntityId(firstRoute.id);
@@ -114,11 +128,72 @@ export default function TraceHomePage() {
       })
       .catch((err) => console.error('Failed to load project:', err))
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
-    loadProject(currentProjectId);
-  }, [currentProjectId, loadProject]);
+    let ignore = false;
+    const fetchInitial = async () => {
+      try {
+        const res = await fetch(`/api/projects/${currentProjectId}`);
+        const data = await res.json();
+        if (!ignore && data.project) {
+          setAnalysis(data.project);
+          const firstRoute = Object.values(data.project.entities as Record<string, TraceEntity>).find(
+            (e) => e.kind === 'route'
+          );
+          if (firstRoute) {
+            setSelectedEntityId(firstRoute.id);
+          } else if (data.project.stats?.mostConnected?.[0]) {
+            setSelectedEntityId(data.project.stats.mostConnected[0].symbolId);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load project:', err);
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    };
+    fetchInitial();
+    return () => {
+      ignore = true;
+    };
+  }, [currentProjectId]);
+
+  // Check URL search parameters (e.g. ?project=immich-app/immich or ?project=proj_1791708954624)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const projParam = params.get('project');
+      if (projParam && projectsList.length > 0) {
+        const match = projectsList.find(
+          (p) => p.id === projParam || p.name.toLowerCase() === projParam.toLowerCase()
+        );
+        if (match && match.id !== currentProjectId) {
+          queueMicrotask(() => setCurrentProjectId(match.id));
+        } else if (!match && projParam !== currentProjectId) {
+          queueMicrotask(() => setCurrentProjectId(projParam));
+        }
+      }
+    }
+  }, [projectsList, currentProjectId]);
+
+  // Precompute file to entities index (O(M) instead of O(N*M), preventing 17.5M iterations on large repos)
+  const fileSymbolsMap = useMemo(() => {
+    if (!analysis) return new Map<string, TraceEntity[]>();
+    const map = new Map<string, TraceEntity[]>();
+    for (const entity of Object.values(analysis.entities)) {
+      if (entity.kind === 'file') continue;
+      const list = map.get(entity.filePath);
+      if (list) {
+        list.push(entity);
+      } else {
+        map.set(entity.filePath, [entity]);
+      }
+    }
+    return map;
+  }, [analysis]);
 
   // Global hotkeys (Ctrl+K / Cmd+K)
   useEffect(() => {
@@ -132,16 +207,16 @@ export default function TraceHomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleEntitySelect = (entityId: string) => {
+  const handleEntitySelect = useCallback((entityId: string) => {
     setSelectedEntityId(entityId);
     setInspectorOpen(true);
-  };
+  }, []);
 
-  const toggleKindFilter = (kind: EntityKind) => {
+  const toggleKindFilter = useCallback((kind: EntityKind) => {
     setSelectedFilterKinds((prev) =>
       prev.includes(kind) ? prev.filter((k) => k !== kind) : [...prev, kind]
     );
-  };
+  }, []);
 
   // Repo metadata
   const gitMeta = analysis?.gitMetadata;
@@ -261,7 +336,7 @@ export default function TraceHomePage() {
           <div className="nav-tabs" style={{ padding: sidebarCollapsed ? '6px 4px' : 6 }}>
             <button
               className={`nav-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
-              onClick={() => setActiveTab('overview')}
+              onClick={() => handleTabChange('overview')}
               title="Overview"
               style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
@@ -269,7 +344,7 @@ export default function TraceHomePage() {
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'paths' ? 'active' : ''}`}
-              onClick={() => setActiveTab('paths')}
+              onClick={() => handleTabChange('paths')}
               title="Trace Explorer"
               style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
@@ -277,7 +352,7 @@ export default function TraceHomePage() {
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'graph' ? 'active' : ''}`}
-              onClick={() => setActiveTab('graph')}
+              onClick={() => handleTabChange('graph')}
               title="Dependencies (Graph)"
               style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
@@ -285,7 +360,7 @@ export default function TraceHomePage() {
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'dataflow' ? 'active' : ''}`}
-              onClick={() => setActiveTab('dataflow')}
+              onClick={() => handleTabChange('dataflow')}
               title="Data Flow"
               style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
@@ -293,7 +368,7 @@ export default function TraceHomePage() {
             </button>
             <button
               className={`nav-tab-btn ${activeTab === 'impact' ? 'active' : ''}`}
-              onClick={() => setActiveTab('impact')}
+              onClick={() => handleTabChange('impact')}
               title="Impact Analysis"
               style={{ justifyContent: sidebarCollapsed ? 'center' : 'flex-start', padding: sidebarCollapsed ? '8px 0' : '7px 10px' }}
             >
@@ -302,7 +377,7 @@ export default function TraceHomePage() {
             <button
               className={`nav-tab-btn ${activeTab === 'ai' ? 'active' : ''}`}
               onClick={() => {
-                setActiveTab('graph');
+                handleTabChange('graph');
                 setInspectorOpen(true);
               }}
               title="AI Insights"
@@ -325,9 +400,7 @@ export default function TraceHomePage() {
                 {analysis && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {Object.keys(analysis.files).map((filePath) => {
-                      const symbolsInFile = Object.values(analysis.entities).filter(
-                        (e) => e.filePath === filePath && e.kind !== 'file'
-                      );
+                      const symbolsInFile = fileSymbolsMap.get(filePath) || [];
                       const isFileActive = selectedEntityId && analysis.entities[selectedEntityId]?.filePath === filePath;
 
                       return (
@@ -442,47 +515,57 @@ export default function TraceHomePage() {
               </div>
             ) : (
               <>
-                {activeTab === 'graph' && (
-                  <RelationshipGraph
-                    analysis={analysis}
-                    selectedEntityId={selectedEntityId}
-                    onSelectEntity={handleEntitySelect}
-                    filterKinds={selectedFilterKinds}
-                    focusEntityId={focusNeighborhood ? selectedEntityId : null}
-                  />
-                )}
+                <div style={{ width: '100%', height: '100%', display: activeTab === 'graph' ? 'block' : 'none' }}>
+                  {visitedTabs.has('graph') && (
+                    <RelationshipGraph
+                      analysis={analysis}
+                      selectedEntityId={selectedEntityId}
+                      onSelectEntity={handleEntitySelect}
+                      filterKinds={selectedFilterKinds}
+                      focusEntityId={focusNeighborhood ? selectedEntityId : null}
+                    />
+                  )}
+                </div>
 
-                {activeTab === 'paths' && (
-                  <ExecutionPathView
-                    analysis={analysis}
-                    selectedEntityId={selectedEntityId}
-                    onSelectEntity={handleEntitySelect}
-                  />
-                )}
+                <div style={{ width: '100%', height: '100%', display: activeTab === 'paths' ? 'block' : 'none' }}>
+                  {visitedTabs.has('paths') && (
+                    <ExecutionPathView
+                      analysis={analysis}
+                      selectedEntityId={selectedEntityId}
+                      onSelectEntity={handleEntitySelect}
+                    />
+                  )}
+                </div>
 
-                {activeTab === 'dataflow' && (
-                  <DataFlowView
-                    analysis={analysis}
-                    selectedEntityId={selectedEntityId}
-                    onSelectEntity={handleEntitySelect}
-                  />
-                )}
+                <div style={{ width: '100%', height: '100%', display: activeTab === 'dataflow' ? 'block' : 'none' }}>
+                  {visitedTabs.has('dataflow') && (
+                    <DataFlowView
+                      analysis={analysis}
+                      selectedEntityId={selectedEntityId}
+                      onSelectEntity={handleEntitySelect}
+                    />
+                  )}
+                </div>
 
-                {activeTab === 'impact' && (
-                  <ImpactView
-                    analysis={analysis}
-                    selectedEntityId={selectedEntityId}
-                    onSelectEntity={handleEntitySelect}
-                  />
-                )}
+                <div style={{ width: '100%', height: '100%', display: activeTab === 'impact' ? 'block' : 'none' }}>
+                  {visitedTabs.has('impact') && (
+                    <ImpactView
+                      analysis={analysis}
+                      selectedEntityId={selectedEntityId}
+                      onSelectEntity={handleEntitySelect}
+                    />
+                  )}
+                </div>
 
-                {activeTab === 'overview' && (
-                  <DashboardView
-                    analysis={analysis}
-                    onSelectEntity={handleEntitySelect}
-                    onNavigateTab={(tab) => setActiveTab(tab as any)}
-                  />
-                )}
+                <div style={{ width: '100%', height: '100%', display: activeTab === 'overview' ? 'block' : 'none' }}>
+                  {visitedTabs.has('overview') && (
+                    <DashboardView
+                      analysis={analysis}
+                      onSelectEntity={handleEntitySelect}
+                      onNavigateTab={handleTabChange}
+                    />
+                  )}
+                </div>
               </>
             )}
           </div>

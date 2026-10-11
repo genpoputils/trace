@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ProjectAnalysis, EntityKind } from '@/lib/types/trace';
+import { ProjectAnalysis } from '@/lib/types/trace';
 import {
   FileText,
   Code,
@@ -10,14 +10,13 @@ import {
   Database,
   AlertTriangle,
   Award,
-  Layers,
   ArrowUpRight,
 } from 'lucide-react';
 
 interface DashboardViewProps {
   analysis: ProjectAnalysis;
   onSelectEntity: (entityId: string) => void;
-  onNavigateTab: (tab: string) => void;
+  onNavigateTab: (tab: 'graph' | 'paths' | 'dataflow' | 'impact' | 'overview') => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -165,16 +164,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          {/* Discovered API Routes */}
+              {/* Discovered API Routes */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 14 }}>
-              <Route size={18} color="var(--primary-blue)" /> Discovered API Routes
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <Route size={18} color="var(--primary-blue)" /> Discovered API Routes ({routes.length})
+              </div>
+              {routes.length > 30 && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Showing top 30</span>
+              )}
             </div>
             {routes.length === 0 ? (
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No HTTP route declarations found.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {routes.map((rt) => (
+                {routes.slice(0, 30).map((rt) => (
                   <div
                     key={rt.id}
                     onClick={() => onSelectEntity(rt.id)}
@@ -203,11 +207,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Database Queries Section */}
         {dbQueries.length > 0 && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: 18 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 14 }}>
-              <Database size={18} color="var(--primary-blue)" /> Identified Database Operations
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <Database size={18} color="var(--primary-blue)" /> Identified Database Operations ({dbQueries.length})
+              </div>
+              {dbQueries.length > 30 && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Showing top 30</span>
+              )}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-              {dbQueries.map((dbq) => (
+              {dbQueries.slice(0, 30).map((dbq) => (
                 <div
                   key={dbq.id}
                   onClick={() => onSelectEntity(dbq.id)}

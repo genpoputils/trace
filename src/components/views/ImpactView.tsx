@@ -1,17 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ProjectAnalysis, ImpactReport, TraceEntity } from '@/lib/types/trace';
+import { ProjectAnalysis, ImpactReport } from '@/lib/types/trace';
 import {
-  ShieldAlert,
   AlertOctagon,
   Route,
-  CheckCircle,
   FileCheck,
   RefreshCw,
   ChevronDown,
   ChevronRight,
-  Database,
 } from 'lucide-react';
 
 interface ImpactViewProps {
@@ -26,31 +23,54 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
   onSelectEntity,
 }) => {
   const candidateSymbols = React.useMemo(() => {
-    return Object.values(analysis.entities).filter(
+    const all = Object.values(analysis.entities).filter(
       (e) => e.kind === 'function' || e.kind === 'method' || e.kind === 'class'
     );
+    return all.slice(0, 150);
   }, [analysis]);
 
-  const [currentEntityId, setCurrentEntityId] = useState<string>(
-    selectedEntityId && analysis.entities[selectedEntityId]
+  const [userSelectedEntityId, setUserSelectedEntityId] = useState<string | null>(null);
+  const [prevPropEntityId, setPrevPropEntityId] = useState<string | null>(selectedEntityId);
+
+  if (prevPropEntityId !== selectedEntityId) {
+    setPrevPropEntityId(selectedEntityId);
+    setUserSelectedEntityId(null);
+  }
+
+  const currentEntityId = (userSelectedEntityId && analysis.entities[userSelectedEntityId])
+    ? userSelectedEntityId
+    : (selectedEntityId && analysis.entities[selectedEntityId])
       ? selectedEntityId
-      : candidateSymbols[0]?.id || ''
-  );
+      : candidateSymbols[0]?.id || '';
 
   const [impactReport, setImpactReport] = useState<ImpactReport | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    if (selectedEntityId && analysis.entities[selectedEntityId]) {
-      setCurrentEntityId(selectedEntityId);
+  // In-memory cache across tab switches and entity selections
+  const impactCacheRef = React.useRef<Map<string, ImpactReport>>(new Map());
+  const activeReqIdRef = React.useRef<number>(0);
+
+  // Ensure current entity is in the dropdown options
+  const visibleCandidates = React.useMemo(() => {
+    if (currentEntityId && !candidateSymbols.some((s) => s.id === currentEntityId)) {
+      const current = analysis.entities[currentEntityId];
+      if (current) return [current, ...candidateSymbols];
     }
-  }, [selectedEntityId, analysis]);
+    return candidateSymbols;
+  }, [currentEntityId, candidateSymbols, analysis.entities]);
 
   useEffect(() => {
     if (!currentEntityId) return;
 
-    let isMounted = true;
+    const cacheKey = `${analysis.projectId}:${currentEntityId}`;
+    if (impactCacheRef.current.has(cacheKey)) {
+      setImpactReport(impactCacheRef.current.get(cacheKey)!);
+      setLoading(false);
+      return;
+    }
+
+    const reqId = ++activeReqIdRef.current;
     setLoading(true);
 
     fetch('/api/impact', {
@@ -63,19 +83,19 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
     })
       .then((res) => res.json())
       .then((data) => {
-        if (isMounted) {
-          setImpactReport(data.impact || null);
+        if (reqId === activeReqIdRef.current) {
+          const resImpact = data.impact || null;
+          if (resImpact) {
+            impactCacheRef.current.set(cacheKey, resImpact);
+          }
+          setImpactReport(resImpact);
           setLoading(false);
         }
       })
       .catch((err) => {
         console.error('Failed to load impact report:', err);
-        if (isMounted) setLoading(false);
+        if (reqId === activeReqIdRef.current) setLoading(false);
       });
-
-    return () => {
-      isMounted = false;
-    };
   }, [analysis.projectId, currentEntityId]);
 
   const togglePath = (id: string) => {
@@ -113,7 +133,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
           </span>
           <select
             value={currentEntityId}
-            onChange={(e) => setCurrentEntityId(e.target.value)}
+            onChange={(e) => setUserSelectedEntityId(e.target.value)}
             style={{
               flex: 1,
               maxWidth: 420,
@@ -126,7 +146,7 @@ export const ImpactView: React.FC<ImpactViewProps> = ({
               fontFamily: 'var(--font-mono)',
             }}
           >
-            {candidateSymbols.map((s) => (
+            {visibleCandidates.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} ({s.filePath})
               </option>

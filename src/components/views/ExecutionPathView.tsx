@@ -1,12 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ProjectAnalysis, ExecutionPath, TraceEntity } from '@/lib/types/trace';
+import { ProjectAnalysis, ExecutionPath } from '@/lib/types/trace';
 import {
   ArrowRight,
   ArrowLeft,
-  Route,
-  Zap,
   AlertTriangle,
   Code2,
   CheckCircle2,
@@ -25,35 +23,64 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
   selectedEntityId,
   onSelectEntity,
 }) => {
-  // Candidate entry points (routes + exported functions)
+  // Candidate entry points (routes + exported functions, bounded for responsive rendering)
   const entryPoints = React.useMemo(() => {
-    return Object.values(analysis.entities).filter(
+    const all = Object.values(analysis.entities).filter(
       (e) => e.kind === 'route' || (e.isExported && (e.kind === 'function' || e.kind === 'method'))
     );
+    // Prioritize routes, then functions, capped to 150 items for snappy select box rendering
+    all.sort((a, b) => {
+      if (a.kind === 'route' && b.kind !== 'route') return -1;
+      if (b.kind === 'route' && a.kind !== 'route') return 1;
+      return 0;
+    });
+    return all.slice(0, 150);
   }, [analysis]);
 
-  const [currentEntryId, setCurrentEntryId] = useState<string>(
-    selectedEntityId && analysis.entities[selectedEntityId]
+  const [userSelectedEntryId, setUserSelectedEntryId] = useState<string | null>(null);
+  const [prevPropEntityId, setPrevPropEntityId] = useState<string | null>(selectedEntityId);
+
+  // Synchronize when selectedEntityId prop changes from parent
+  if (prevPropEntityId !== selectedEntityId) {
+    setPrevPropEntityId(selectedEntityId);
+    setUserSelectedEntryId(null);
+  }
+
+  const currentEntryId = (userSelectedEntryId && analysis.entities[userSelectedEntryId])
+    ? userSelectedEntryId
+    : (selectedEntityId && analysis.entities[selectedEntityId])
       ? selectedEntityId
-      : entryPoints[0]?.id || ''
-  );
+      : entryPoints[0]?.id || '';
 
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
   const [traceData, setTraceData] = useState<ExecutionPath | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Sync if selectedEntityId changes
-  useEffect(() => {
-    if (selectedEntityId && analysis.entities[selectedEntityId]) {
-      setCurrentEntryId(selectedEntityId);
-    }
-  }, [selectedEntityId, analysis]);
+  // In-memory cache across tab switches and entity visits
+  const traceCacheRef = React.useRef<Map<string, ExecutionPath>>(new Map());
+  const activeReqIdRef = React.useRef<number>(0);
 
-  // Fetch execution trace
+  // Ensure current selected entity is present in options list
+  const visibleEntryPoints = React.useMemo(() => {
+    if (currentEntryId && !entryPoints.some((ep) => ep.id === currentEntryId)) {
+      const current = analysis.entities[currentEntryId];
+      if (current) return [current, ...entryPoints];
+    }
+    return entryPoints;
+  }, [currentEntryId, entryPoints, analysis.entities]);
+
+  // Fetch execution trace with caching and stale response prevention
   useEffect(() => {
     if (!currentEntryId) return;
 
-    let isMounted = true;
+    const cacheKey = `${analysis.projectId}:${currentEntryId}:${direction}`;
+    if (traceCacheRef.current.has(cacheKey)) {
+      setTraceData(traceCacheRef.current.get(cacheKey)!);
+      setLoading(false);
+      return;
+    }
+
+    const reqId = ++activeReqIdRef.current;
     setLoading(true);
 
     fetch('/api/trace', {
@@ -67,22 +94,20 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
     })
       .then((res) => res.json())
       .then((data) => {
-        if (isMounted) {
-          setTraceData(data.trace || null);
+        if (reqId === activeReqIdRef.current) {
+          const resTrace = data.trace || null;
+          if (resTrace) {
+            traceCacheRef.current.set(cacheKey, resTrace);
+          }
+          setTraceData(resTrace);
           setLoading(false);
         }
       })
       .catch((err) => {
         console.error('Failed to load trace:', err);
-        if (isMounted) setLoading(false);
+        if (reqId === activeReqIdRef.current) setLoading(false);
       });
-
-    return () => {
-      isMounted = false;
-    };
   }, [analysis.projectId, currentEntryId, direction]);
-
-  const currentEntity = analysis.entities[currentEntryId];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -105,7 +130,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
           </span>
           <select
             value={currentEntryId}
-            onChange={(e) => setCurrentEntryId(e.target.value)}
+            onChange={(e) => setUserSelectedEntryId(e.target.value)}
             style={{
               flex: 1,
               maxWidth: 420,
@@ -118,7 +143,7 @@ export const ExecutionPathView: React.FC<ExecutionPathViewProps> = ({
               fontFamily: 'var(--font-mono)',
             }}
           >
-            {entryPoints.map((ep) => (
+            {visibleEntryPoints.map((ep) => (
               <option key={ep.id} value={ep.id}>
                 [{ep.kind.toUpperCase()}] {ep.name} ({ep.filePath})
               </option>

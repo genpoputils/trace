@@ -1,14 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ProjectAnalysis, DataFlowTrace, TraceEntity } from '@/lib/types/trace';
+import { ProjectAnalysis, DataFlowTrace } from '@/lib/types/trace';
 import {
-  Waves,
   ArrowDown,
   Database,
-  Code2,
-  AlertCircle,
-  CheckCircle2,
   RefreshCw,
   FileInput,
 } from 'lucide-react';
@@ -25,30 +21,53 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
   onSelectEntity,
 }) => {
   const candidateSymbols = React.useMemo(() => {
-    return Object.values(analysis.entities).filter(
+    const all = Object.values(analysis.entities).filter(
       (e) => e.kind === 'function' || e.kind === 'method' || e.kind === 'route'
     );
+    return all.slice(0, 150);
   }, [analysis]);
 
-  const [currentSymbolId, setCurrentSymbolId] = useState<string>(
-    selectedEntityId && analysis.entities[selectedEntityId]
+  const [userSelectedSymbolId, setUserSelectedSymbolId] = useState<string | null>(null);
+  const [prevPropEntityId, setPrevPropEntityId] = useState<string | null>(selectedEntityId);
+
+  if (prevPropEntityId !== selectedEntityId) {
+    setPrevPropEntityId(selectedEntityId);
+    setUserSelectedSymbolId(null);
+  }
+
+  const currentSymbolId = (userSelectedSymbolId && analysis.entities[userSelectedSymbolId])
+    ? userSelectedSymbolId
+    : (selectedEntityId && analysis.entities[selectedEntityId])
       ? selectedEntityId
-      : candidateSymbols[0]?.id || ''
-  );
+      : candidateSymbols[0]?.id || '';
 
   const [flowData, setFlowData] = useState<DataFlowTrace | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (selectedEntityId && analysis.entities[selectedEntityId]) {
-      setCurrentSymbolId(selectedEntityId);
+  // In-memory cache across tab switches and symbol selections
+  const flowCacheRef = React.useRef<Map<string, DataFlowTrace>>(new Map());
+  const activeReqIdRef = React.useRef<number>(0);
+
+  // Ensure current symbol is in the dropdown options
+  const visibleCandidates = React.useMemo(() => {
+    if (currentSymbolId && !candidateSymbols.some((s) => s.id === currentSymbolId)) {
+      const current = analysis.entities[currentSymbolId];
+      if (current) return [current, ...candidateSymbols];
     }
-  }, [selectedEntityId, analysis]);
+    return candidateSymbols;
+  }, [currentSymbolId, candidateSymbols, analysis.entities]);
 
   useEffect(() => {
     if (!currentSymbolId) return;
 
-    let isMounted = true;
+    const cacheKey = `${analysis.projectId}:${currentSymbolId}`;
+    if (flowCacheRef.current.has(cacheKey)) {
+      setFlowData(flowCacheRef.current.get(cacheKey)!);
+      setLoading(false);
+      return;
+    }
+
+    const reqId = ++activeReqIdRef.current;
     setLoading(true);
 
     fetch('/api/dataflow', {
@@ -61,19 +80,19 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
     })
       .then((res) => res.json())
       .then((data) => {
-        if (isMounted) {
-          setFlowData(data.dataFlow || null);
+        if (reqId === activeReqIdRef.current) {
+          const resFlow = data.dataFlow || null;
+          if (resFlow) {
+            flowCacheRef.current.set(cacheKey, resFlow);
+          }
+          setFlowData(resFlow);
           setLoading(false);
         }
       })
       .catch((err) => {
         console.error('Failed to load data flow:', err);
-        if (isMounted) setLoading(false);
+        if (reqId === activeReqIdRef.current) setLoading(false);
       });
-
-    return () => {
-      isMounted = false;
-    };
   }, [analysis.projectId, currentSymbolId]);
 
   return (
@@ -95,7 +114,7 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
           </span>
           <select
             value={currentSymbolId}
-            onChange={(e) => setCurrentSymbolId(e.target.value)}
+            onChange={(e) => setUserSelectedSymbolId(e.target.value)}
             style={{
               flex: 1,
               maxWidth: 400,
@@ -108,7 +127,7 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
               fontFamily: 'var(--font-mono)',
             }}
           >
-            {candidateSymbols.map((s) => (
+            {visibleCandidates.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} ({s.filePath})
               </option>
@@ -169,7 +188,13 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
                       <span className="kind-badge" style={{ background: 'var(--blue-selection-bg)', color: 'var(--primary-blue)' }}>
                         {step.flowType.toUpperCase()}
                       </span>
-                      <strong style={{ fontSize: 13, color: 'var(--text-primary)' }}>{step.symbolName}</strong>
+                      <strong
+                        style={{ fontSize: 13, color: 'var(--text-primary)', cursor: step.symbolId ? 'pointer' : 'default' }}
+                        onClick={() => step.symbolId && onSelectEntity(step.symbolId)}
+                        title="Click to inspect this entity"
+                      >
+                        {step.symbolName}
+                      </strong>
                     </div>
                     <span style={{ fontSize: 11, color: step.confidence === 'statically_resolved' ? 'var(--success-teal)' : 'var(--warning-amber)' }}>
                       {step.confidence === 'statically_resolved' ? '✓ Statically Established' : '⚠️ Inferred Flow'}
@@ -215,7 +240,12 @@ export const DataFlowView: React.FC<DataFlowViewProps> = ({
                 </div>
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {flowData.sinkEntityIds.map((sinkId) => (
-                    <div key={sinkId} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    <div
+                      key={sinkId}
+                      style={{ fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      onClick={() => onSelectEntity(sinkId)}
+                      title="Click to inspect sink entity"
+                    >
                       • <code>{analysis.entities[sinkId]?.name || sinkId}</code>
                     </div>
                   ))}
