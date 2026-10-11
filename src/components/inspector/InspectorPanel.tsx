@@ -332,12 +332,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {inbound.map((rel) => {
+                  {inbound.map((rel, idx) => {
                     const caller = analysis.entities[rel.sourceId];
                     if (!caller) return null;
                     return (
                       <div
-                        key={rel.id}
+                        key={`${rel.id}-${idx}`}
                         onClick={() => onSelectEntity(caller.id)}
                         style={{
                           padding: 8,
@@ -382,11 +382,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {outbound.map((rel) => {
+                  {outbound.map((rel, idx) => {
                     const callee = analysis.entities[rel.targetId];
                     return (
                       <div
-                        key={rel.id}
+                        key={`${rel.id}-${idx}`}
                         onClick={() => callee && onSelectEntity(callee.id)}
                         style={{
                           padding: 8,

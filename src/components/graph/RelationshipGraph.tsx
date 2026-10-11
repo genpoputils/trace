@@ -279,10 +279,20 @@ function RelationshipGraphContent({
     }));
 
     const rawEdges: Edge[] = [];
+    const seenEdgeIds = new Set<string>();
     for (const rel of analysis.relationships) {
       if (entityIds.has(rel.sourceId) && entityIds.has(rel.targetId)) {
+        let edgeId = rel.id;
+        if (seenEdgeIds.has(edgeId)) {
+          let counter = 2;
+          while (seenEdgeIds.has(`${rel.id}_${counter}`)) {
+            counter++;
+          }
+          edgeId = `${rel.id}_${counter}`;
+        }
+        seenEdgeIds.add(edgeId);
         rawEdges.push({
-          id: rel.id,
+          id: edgeId,
           source: rel.sourceId,
           target: rel.targetId,
           label: rel.kind === 'routes_to' ? 'routes' : rel.kind === 'calls' ? 'calls' : rel.kind,
