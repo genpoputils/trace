@@ -14,6 +14,11 @@ export type AnalyzerProgressCallback = (
   progress: { current: number; total: number; message: string }
 ) => void;
 
+export interface AnalyzerOptions {
+  signal?: AbortSignal;
+  cancellationToken?: { isCancelled?: boolean };
+}
+
 export class CodebaseAnalyzer {
   private tsAdapter: TypeScriptAdapter;
 
@@ -27,8 +32,20 @@ export class CodebaseAnalyzer {
   public analyzeProject(
     projectName: string,
     files: Record<string, FileRecord>,
-    onProgress?: AnalyzerProgressCallback
+    onProgress?: AnalyzerProgressCallback,
+    options?: AnalyzerOptions
   ): ProjectAnalysis {
+    const startTime = performance.now();
+    const stageDurations: Record<string, number> = {};
+
+    const checkCancellation = () => {
+      if (options?.signal?.aborted || options?.cancellationToken?.isCancelled) {
+        throw new Error('Analysis cancelled by user.');
+      }
+    };
+
+    checkCancellation();
+
     const allEntities: Record<string, TraceEntity> = {};
     const entitiesByName = new Map<string, TraceEntity[]>();
     const allRelationships: TraceRelationship[] = [];
@@ -53,15 +70,18 @@ export class CodebaseAnalyzer {
     let processedFiles = 0;
 
     // Phase 1: Per-file AST parsing
+    const parsingStart = performance.now();
     for (const [filePath, fileRecord] of fileEntries) {
+      checkCancellation();
       processedFiles++;
-      if (processedFiles % 25 === 0 || processedFiles === totalFiles) {
+      if (processedFiles % 15 === 0 || processedFiles === totalFiles) {
         onProgress?.('parsing', {
           current: processedFiles,
           total: totalFiles,
           message: `Parsed AST for ${processedFiles} / ${totalFiles} files...`,
         });
       }
+
 
       if (this.tsAdapter.supports(filePath)) {
         languagesSet.add(fileRecord.language);
@@ -116,13 +136,18 @@ export class CodebaseAnalyzer {
         registerEntity(fileEnt);
       }
     }
+    stageDurations.parsing = Math.round((performance.now() - parsingStart) * 100) / 100;
+
+    checkCancellation();
 
     // Phase 2: Cross-Module Import Resolution
+    const resolvingStart = performance.now();
     onProgress?.('resolving', {
       current: 0,
       total: allRelationships.length,
       message: `Resolving dependencies across ${allRelationships.length} relationships...`,
     });
+
 
     const resolvedRelationships: TraceRelationship[] = [];
 
@@ -263,8 +288,12 @@ export class CodebaseAnalyzer {
         uniqueResolvedRelationships.push(r);
       }
     }
+    stageDurations.resolution = Math.round((performance.now() - resolvingStart) * 100) / 100;
+
+    checkCancellation();
 
     // Phase 4: Calculate connectivity & Centrality Metrics
+    const centralityStart = performance.now();
     onProgress?.('preparing', {
       current: 1,
       total: 1,
@@ -301,8 +330,12 @@ export class CodebaseAnalyzer {
     const routesCount = Object.values(allEntities).filter((e) => e.kind === 'route').length;
     const dbQueriesCount = Object.values(allEntities).filter((e) => e.kind === 'db_query').length;
     const totalLines = Object.values(files).reduce((acc, f) => acc + f.lines, 0);
+    stageDurations.centrality = Math.round((performance.now() - centralityStart) * 100) / 100;
+
+    checkCancellation();
 
     // Phase 5: Multi-Ecosystem Dependency Intelligence Scan
+    const depStart = performance.now();
     const depScanner = EcosystemRegistry.getInstance();
     const depResult = depScanner.scanRepositorySync(files, allEntities);
     if (depResult.discoveredFiles.length > 0) {
@@ -316,6 +349,15 @@ export class CodebaseAnalyzer {
         }
       }
     }
+    stageDurations.dependencies = Math.round((performance.now() - depStart) * 100) / 100;
+
+    const totalDurationMs = Math.round((performance.now() - startTime) * 100) / 100;
+
+    const errorCount = allWarnings.filter((w) => w.severity === 'error').length;
+    const isPartial = errorCount > 0;
+    const partialReason = isPartial
+      ? `${errorCount} parsing or dependency diagnostic error(s) occurred. Some relationships or files may be incomplete.`
+      : undefined;
 
     return {
       projectId: `proj_${Date.now()}`,
@@ -343,8 +385,17 @@ export class CodebaseAnalyzer {
         'Conditional branches and exception paths are statically detected as potential branches without runtime predicate evaluation.',
       ],
       dependencies: depResult,
+      isPartial,
+      partialReason,
+      analysisMetadata: {
+        stageDurations,
+        totalDurationMs,
+        workerUsed: false,
+        timestamp: new Date().toISOString(),
+      },
     };
   }
+
 
   /**
    * Resolve an import specifier to a concrete target entity in the target file

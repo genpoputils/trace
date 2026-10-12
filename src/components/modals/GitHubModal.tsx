@@ -193,17 +193,16 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            disabled={analyzing}
             aria-label="Close GitHub modal"
             style={{
               background: 'transparent',
               border: 'none',
-              cursor: analyzing ? 'not-allowed' : 'pointer',
-              opacity: analyzing ? 0.4 : 1,
+              cursor: 'pointer',
             }}
           >
             <X size={18} color="var(--text-muted)" />
           </button>
+
         </div>
 
         {/* Tab Navigation */}
@@ -551,11 +550,32 @@ export const GitHubModal: React.FC<GitHubModalProps> = ({
                 {analysisStatus}
               </div>
 
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                Analysis executes directly in your browser&apos;s Web Worker. You can safely keep this open or close it.
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  Analysis executes directly in your browser&apos;s Web Worker. You can safely close this modal to browse while it finishes.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    browserAnalysisService.cancelActiveAnalysis();
+                    setAnalyzing(false);
+                  }}
+                  className="tool-btn"
+                  style={{
+                    fontSize: 11,
+                    padding: '3px 8px',
+                    color: 'var(--error-red)',
+                    borderColor: 'var(--border-color)',
+                    flexShrink: 0,
+                  }}
+                  title="Cancel analysis immediately"
+                >
+                  Cancel Analysis
+                </button>
               </div>
             </div>
           )}
+
 
           {/* Error display */}
           {error && (() => {

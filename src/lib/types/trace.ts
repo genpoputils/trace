@@ -213,6 +213,56 @@ export interface ProjectAnalysis {
   warnings: AnalysisWarning[];
   limitations: string[];
   dependencies?: import('../dependencies/types').DependencyScanResult;
+  isPartial?: boolean;
+  partialReason?: string;
+  skippedFiles?: { path: string; reason: string }[];
+  analysisMetadata?: AnalysisPerformanceMetrics;
+}
+
+export interface AnalysisPerformanceMetrics {
+  stageDurations: {
+    download?: number;
+    extraction?: number;
+    discovery?: number;
+    parsing?: number;
+    resolution?: number;
+    centrality?: number;
+    dependencies?: number;
+    finalisation?: number;
+    [stage: string]: number | undefined;
+  };
+  totalDurationMs: number;
+  workerUsed: boolean;
+  cacheHit?: boolean;
+  memoryUsageBytes?: number;
+  timestamp: string;
+}
+
+export type AnalysisLifecycleState =
+  | 'idle'
+  | 'running'
+  | 'completed'
+  | 'partial'
+  | 'cancelled'
+  | 'failed';
+
+export interface AnalysisStageProgress {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
+  current?: number;
+  total?: number;
+  durationMs?: number;
+  message?: string;
+}
+
+export interface AnalysisErrorDetails {
+  title: string;
+  message: string;
+  stage?: string;
+  recoveryAction?: string;
+  canRetry?: boolean;
+  technicalDetails?: string;
 }
 
 export * from '../dependencies/types';
@@ -229,3 +279,4 @@ export interface SearchResult {
   matches: { field: string; snippet: string }[];
   score: number;
 }
+

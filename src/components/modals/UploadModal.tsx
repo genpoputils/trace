@@ -211,12 +211,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
         <div className="modal-footer">
           <button
-            onClick={onClose}
-            disabled={loading}
+            onClick={() => {
+              if (loading) {
+                browserAnalysisService.cancelActiveAnalysis();
+                setLoading(false);
+              } else {
+                onClose();
+              }
+            }}
             className="tool-btn"
-            style={{ opacity: loading ? 0.5 : 1 }}
           >
-            Cancel
+            {loading ? 'Cancel Analysis' : 'Cancel'}
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -226,6 +231,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             {loading ? 'Analyzing...' : 'Browse Computer'}
           </button>
         </div>
+
       </div>
     </div>
   );

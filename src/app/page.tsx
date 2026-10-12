@@ -19,7 +19,9 @@ import { LowerSourcePanel } from '@/components/source/LowerSourcePanel';
 import { UploadModal } from '@/components/modals/UploadModal';
 import { GitHubModal } from '@/components/modals/GitHubModal';
 import { SearchModal } from '@/components/modals/SearchModal';
+import { AnalysisStatusSurface } from '@/components/analysis/AnalysisStatusSurface';
 import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
+
 import {
   Filter,
   Eye,
@@ -143,6 +145,19 @@ export default function TraceHomePage() {
     [activeTab]
   );
 
+  // Auto-switch to newly completed or partial analysis project
+  useEffect(() => {
+    return browserAnalysisService.subscribe((state) => {
+      if ((state.status === 'completed' || state.status === 'partial') && state.projectId) {
+        if (state.projectId !== currentProjectId) {
+          loadProject(state.projectId);
+          refreshProjectsList();
+        }
+      }
+    });
+  }, [currentProjectId, loadProject, refreshProjectsList]);
+
+
   useEffect(() => {
     let ignore = false;
     const fetchInitial = async () => {
@@ -195,7 +210,9 @@ export default function TraceHomePage() {
   const fileSymbolsMap = useMemo(() => {
     if (!analysis) return new Map<string, TraceEntity[]>();
     const map = new Map<string, TraceEntity[]>();
-    for (const entity of Object.values(analysis.entities)) {
+    const entities = analysis.entities;
+    for (const id in entities) {
+      const entity = entities[id];
       if (entity.kind === 'file') continue;
       const list = map.get(entity.filePath);
       if (list) {
@@ -206,6 +223,7 @@ export default function TraceHomePage() {
     }
     return map;
   }, [analysis]);
+
 
   // Global hotkeys (Ctrl+K / Cmd+K)
   useEffect(() => {
@@ -304,8 +322,12 @@ export default function TraceHomePage() {
 
         {/* Central Workspace Area */}
         <main className="center-workspace" role="main">
+          {/* Analysis Lifecycle Status Surface */}
+          <AnalysisStatusSurface onSelectProject={loadProject} />
+
           {/* Workspace Toolbar */}
           <div className="workspace-toolbar" role="toolbar" aria-label="View toolbar">
+
             <div className="toolbar-info">
               {analysis ? (
                 <>

@@ -61,13 +61,14 @@ export const OnboardingEmptyState: React.FC<OnboardingEmptyStateProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: 'var(--primary-blue)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             GenPopUtils Trace
           </div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
-            Visual Codebase Intelligence Platform
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+            Analyse a codebase
           </h1>
           <p style={{ fontSize: 14, color: 'var(--text-secondary)', maxWidth: 560, lineHeight: 1.6 }}>
-            Explore software architecture, trace execution hierarchies, track data flows, and analyze change blast radii in an interactive developer workspace.
+            Load a repository to explore its files, symbols, dependencies, and relationships.
           </p>
         </div>
+
 
         {/* 3 Primary Action Cards */}
         <div
