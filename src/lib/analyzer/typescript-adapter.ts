@@ -624,7 +624,7 @@ export class TypeScriptAdapter {
         if (dbQuery) {
           entities.push(dbQuery);
           relationships.push({
-            id: `${caller.id}->calls->${dbQuery.id}#${dbQuery.location.startLine}`,
+            id: `${caller.id}->calls->${dbQuery.id}#${dbQuery.location.startLine}:${dbQuery.location.startColumn}`,
             sourceId: caller.id,
             targetId: dbQuery.id,
             kind: 'calls',
@@ -649,7 +649,7 @@ export class TypeScriptAdapter {
 
           if (local) {
             relationships.push({
-              id: `${caller.id}->calls->${local.entityId}#${callLoc.startLine}`,
+              id: `${caller.id}->calls->${local.entityId}#${callLoc.startLine}:${callLoc.startColumn}`,
               sourceId: caller.id,
               targetId: local.entityId,
               kind: 'calls',
@@ -664,7 +664,7 @@ export class TypeScriptAdapter {
 
             if (imp) {
               relationships.push({
-                id: `${caller.id}->calls->import:${imp.sourceModule}:${imp.importedName}#${callLoc.startLine}`,
+                id: `${caller.id}->calls->import:${imp.sourceModule}:${imp.importedName}#${callLoc.startLine}:${callLoc.startColumn}`,
                 sourceId: caller.id,
                 targetId: `__import__:${imp.sourceModule}:${imp.importedName || calleeName}`,
                 kind: 'calls',
@@ -692,7 +692,7 @@ export class TypeScriptAdapter {
 
           if (imp) {
             relationships.push({
-              id: `${caller.id}->calls->import:${imp.sourceModule}:${objName}.${methodName}#${callLoc.startLine}`,
+              id: `${caller.id}->calls->import:${imp.sourceModule}:${objName}.${methodName}#${callLoc.startLine}:${callLoc.startColumn}`,
               sourceId: caller.id,
               targetId: `__import__:${imp.sourceModule}:${objName}.${methodName}`,
               kind: 'calls',
@@ -705,7 +705,7 @@ export class TypeScriptAdapter {
             const localClassMethod = localSymbols.get(`${objName}.${methodName}`);
             if (localClassMethod) {
               relationships.push({
-                id: `${caller.id}->calls->${localClassMethod.entityId}#${callLoc.startLine}`,
+                id: `${caller.id}->calls->${localClassMethod.entityId}#${callLoc.startLine}:${callLoc.startColumn}`,
                 sourceId: caller.id,
                 targetId: localClassMethod.entityId,
                 kind: 'calls',
@@ -718,7 +718,7 @@ export class TypeScriptAdapter {
               const targetMethod = localSymbols.get(`${currentClass.name}.${methodName}`);
               if (targetMethod) {
                 relationships.push({
-                  id: `${caller.id}->calls->${targetMethod.entityId}#${callLoc.startLine}`,
+                  id: `${caller.id}->calls->${targetMethod.entityId}#${callLoc.startLine}:${callLoc.startColumn}`,
                   sourceId: caller.id,
                   targetId: targetMethod.entityId,
                   kind: 'calls',
@@ -730,7 +730,7 @@ export class TypeScriptAdapter {
               }
             } else if (!['log', 'error', 'warn', 'info', 'map', 'filter', 'forEach', 'reduce', 'push', 'slice', 'join', 'split', 'trim', 'then', 'catch', 'json', 'status', 'send'].includes(methodName)) {
               relationships.push({
-                id: `${caller.id}->calls->inferred:${objName}.${methodName}#${callLoc.startLine}`,
+                id: `${caller.id}->calls->inferred:${objName}.${methodName}#${callLoc.startLine}:${callLoc.startColumn}`,
                 sourceId: caller.id,
                 targetId: `__inferred__:${objName}.${methodName}`,
                 kind: 'calls',
@@ -781,7 +781,7 @@ export class TypeScriptAdapter {
             entities.push(envEntity);
 
             relationships.push({
-              id: `${caller.id}->reads_from->${envEntity.id}`,
+              id: `${caller.id}->reads_from->${envEntity.id}#${envLoc.startLine}:${envLoc.startColumn}`,
               sourceId: caller.id,
               targetId: envEntity.id,
               kind: 'reads_from',

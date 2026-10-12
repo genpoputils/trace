@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { getEcosystemCapability } from '../capability-matrix';
 import { getDirname, getBasename } from '../utils';
+import { buildDependencyProvenance } from '../provenance';
 
 export class GoAdapter implements EcosystemAdapter {
   public readonly ecosystem = 'go' as const;
@@ -77,11 +78,16 @@ export class GoAdapter implements EcosystemAdapter {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 3) {
           const mod = parts[0];
+          const isModFile = parts[1].endsWith('/go.mod');
           const ver = parts[1].replace(/\/go\.mod$/, '');
           const hash = parts[2];
-          checksumMap.set(`${mod}@${ver}`, hash);
+          // Always prefer main module checksum over /go.mod metadata checksum
+          if (!isModFile || !checksumMap.has(`${mod}@${ver}`)) {
+            checksumMap.set(`${mod}@${ver}`, hash);
+          }
         }
       }
+
     } else {
       diagnostics.push({
         filePath: manifestFile.path,
@@ -93,6 +99,7 @@ export class GoAdapter implements EcosystemAdapter {
 
     const lines = manifestFile.content.split('\n');
     let inRequireBlock = false;
+    const directDepMap = new Map<string, NormalizedDependency>();
 
     for (let i = 0; i < lines.length; i++) {
       const lineNum = i + 1;
@@ -154,13 +161,39 @@ export class GoAdapter implements EcosystemAdapter {
             });
           }
 
-          dependencies.push({
-            id: `go:gomod:${modulePath}@${manifestFile.path}`,
+          const provenance = buildDependencyProvenance({
+            name: modulePath,
+            ecosystem: 'go',
+            packageManager: 'gomod',
+            manifestPath: manifestFile.path,
+            lockfilePath: sumFile?.path,
+            declaredSpecifier: isDirect ? version : undefined,
+            resolvedVersion: sumFile ? version : undefined,
+            integrity: hash,
+            isDirect,
+            getFile: context.getFile,
+          });
+
+          const depId = `go:gomod:${modulePath}@${manifestFile.path}`;
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push(...evidence);
+            if (isDirect && !existing.isDirect) {
+              existing.isDirect = true;
+              existing.isTransitive = false;
+              existing.versionDeclared = version;
+            }
+            continue;
+          }
+
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'go',
             packageManager: 'gomod',
             name: modulePath,
-            versionDeclared: version,
-            versionResolved: version,
+            versionDeclared: isDirect ? version : undefined,
+            versionResolved: sumFile ? version : undefined,
+            versionInstalled: provenance.installed.version,
             scope,
             isDirect,
             isTransitive: isIndirect,
@@ -168,8 +201,12 @@ export class GoAdapter implements EcosystemAdapter {
             lockfilePath: sumFile?.path,
             workspacePath,
             evidence,
+            provenance,
             notes: isIndirect ? ['Indirect dependency (required transitively)'] : undefined,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     }

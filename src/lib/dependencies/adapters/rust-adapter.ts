@@ -12,9 +12,11 @@ import {
   ManifestDiagnostic,
   DependencyEvidence,
   DependencyScope,
+  SCOPE_PRECEDENCE,
 } from '../types';
 import { getEcosystemCapability } from '../capability-matrix';
 import { getDirname, getBasename, parseSimpleToml } from '../utils';
+import { buildDependencyProvenance } from '../provenance';
 
 export class RustAdapter implements EcosystemAdapter {
   public readonly ecosystem = 'rust' as const;
@@ -108,20 +110,52 @@ export class RustAdapter implements EcosystemAdapter {
 
     const resolvedMap = new Map<
       string,
-      { resolvedVersion: string; source?: string; checksum?: string }
+      {
+        resolvedVersion: string;
+        source?: string;
+        checksum?: string;
+        dependencies?: string[];
+        parentPackages?: string[];
+      }
     >();
 
     if (lockFile) {
       try {
         const lockToml = parseSimpleToml(lockFile.content);
+        const packageParents = new Map<string, string[]>();
+
         if (Array.isArray(lockToml.package)) {
           for (const pkg of lockToml.package) {
             if (pkg && pkg.name && pkg.version) {
-              resolvedMap.set(String(pkg.name), {
+              const pkgName = String(pkg.name);
+              const childDeps: string[] = [];
+              if (Array.isArray(pkg.dependencies)) {
+                for (const depItem of pkg.dependencies) {
+                  const childName = String(depItem).split(' ')[0].trim();
+                  if (childName) {
+                    childDeps.push(childName);
+                    const parents = packageParents.get(childName) || [];
+                    if (!parents.includes(pkgName)) parents.push(pkgName);
+                    packageParents.set(childName, parents);
+                  }
+                }
+              }
+
+              resolvedMap.set(pkgName, {
                 resolvedVersion: String(pkg.version),
                 source: pkg.source ? String(pkg.source) : undefined,
                 checksum: pkg.checksum ? String(pkg.checksum) : undefined,
+                dependencies: childDeps,
+                parentPackages: packageParents.get(pkgName) || [],
               });
+            }
+          }
+
+          // Backfill parent packages
+          for (const [pkgName, parents] of packageParents.entries()) {
+            const item = resolvedMap.get(pkgName);
+            if (item) {
+              item.parentPackages = parents;
             }
           }
         }
@@ -149,7 +183,10 @@ export class RustAdapter implements EcosystemAdapter {
       { key: 'build-dependencies', scope: 'build' },
     ];
 
+    const scopePrecedence = SCOPE_PRECEDENCE;
+
     const declaredNames = new Set<string>();
+    const directDepMap = new Map<string, NormalizedDependency>();
 
     for (const { key, scope } of sections) {
       const depTable = toml[key];
@@ -164,16 +201,41 @@ export class RustAdapter implements EcosystemAdapter {
               ? (specRec.version as string) || (specRec.path as string) || (specRec.git as string) || '*'
               : '*';
 
-          const resolved = resolvedMap.get(name);
+          // Support Cargo package rename / alias: my_serde = { package = "serde", version = "1.0" }
+          let actualPackageName = name;
+          let declaredAlias: string | undefined = undefined;
 
-          const evidence: DependencyEvidence[] = [
-            {
-              sourceFilePath: manifestFile.path,
-              sourceKind: 'manifest',
-              evidenceKind: 'declared_only',
-              rawSpecifier: String(rawSpec),
-            },
-          ];
+          if (specRec && typeof specRec.package === 'string') {
+            actualPackageName = specRec.package;
+            declaredAlias = name;
+          }
+          declaredNames.add(actualPackageName);
+
+          const depKey = declaredAlias ? `${declaredAlias}:${actualPackageName}` : actualPackageName;
+          const depId = `rust:cargo:${depKey}@${manifestFile.path}`;
+
+          const resolved = resolvedMap.get(actualPackageName) || resolvedMap.get(name);
+
+          const manifestEvidence: DependencyEvidence = {
+            sourceFilePath: manifestFile.path,
+            sourceKind: 'manifest',
+            evidenceKind: 'declared_only',
+            rawSpecifier: String(rawSpec),
+          };
+
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push(manifestEvidence);
+            if (scopePrecedence[scope] > scopePrecedence[existing.scope]) {
+              existing.scope = scope;
+              existing.versionDeclared = String(rawSpec);
+            }
+            if (!existing.notes) existing.notes = [];
+            existing.notes.push(`Also declared in [${key}] with specifier '${rawSpec}'`);
+            continue;
+          }
+
+          const evidence: DependencyEvidence[] = [manifestEvidence];
 
           if (resolved && lockFile) {
             evidence.push({
@@ -187,21 +249,56 @@ export class RustAdapter implements EcosystemAdapter {
             });
           }
 
-          dependencies.push({
-            id: `rust:cargo:${name}@${manifestFile.path}`,
+          const provenance = buildDependencyProvenance({
+            name: actualPackageName,
             ecosystem: 'rust',
             packageManager: 'cargo',
-            name,
+            manifestPath: manifestFile.path,
+            lockfilePath: lockFile?.path,
+            declaredSpecifier: String(rawSpec),
+            resolvedVersion: resolved?.resolvedVersion,
+            integrity: resolved?.checksum,
+            resolvedUrl: resolved?.source,
+            isDirect: true,
+            alias: declaredAlias,
+            getFile: context.getFile,
+            findFile: context.findFile,
+          });
+
+          if (provenance.hasConflict) {
+            for (const c of provenance.conflicts) {
+              diagnostics.push({
+                filePath: manifestFile.path,
+                severity: c.severity,
+                code: 'version_conflict',
+                message: `[${actualPackageName}] ${c.message}`,
+              });
+            }
+          }
+
+          const dep: NormalizedDependency = {
+            id: depId,
+            ecosystem: 'rust',
+            packageManager: 'cargo',
+            name: actualPackageName,
             versionDeclared: String(rawSpec),
             versionResolved: resolved?.resolvedVersion,
+            versionInstalled: provenance.installed.version,
+            alias: declaredAlias,
             scope,
             isDirect: true,
             isTransitive: false,
+            parentPackages: resolved?.parentPackages,
+            dependencies: resolved?.dependencies,
             manifestPath: manifestFile.path,
             lockfilePath: lockFile?.path,
             workspacePath,
             evidence,
-          });
+            provenance,
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     }
@@ -210,8 +307,24 @@ export class RustAdapter implements EcosystemAdapter {
     if (lockFile && resolvedMap.size > 0) {
       const pkgObj = toml.package as Record<string, unknown> | undefined;
       const currentPkgName = pkgObj?.name as string | undefined;
+      const seenTransitives = new Set<string>();
       for (const [name, resolved] of resolvedMap.entries()) {
-        if (!declaredNames.has(name) && name !== currentPkgName) {
+        if (!declaredNames.has(name) && name !== currentPkgName && !seenTransitives.has(name)) {
+          seenTransitives.add(name);
+          const provenance = buildDependencyProvenance({
+            name,
+            ecosystem: 'rust',
+            packageManager: 'cargo',
+            manifestPath: manifestFile.path,
+            lockfilePath: lockFile.path,
+            declaredSpecifier: undefined,
+            resolvedVersion: resolved.resolvedVersion,
+            integrity: resolved.checksum,
+            resolvedUrl: resolved.source,
+            isDirect: false,
+            getFile: context.getFile,
+          });
+
           dependencies.push({
             id: `rust:cargo:${name}:transitive@${lockFile.path}`,
             ecosystem: 'rust',
@@ -219,9 +332,12 @@ export class RustAdapter implements EcosystemAdapter {
             name,
             versionDeclared: undefined,
             versionResolved: resolved.resolvedVersion,
+            versionInstalled: provenance.installed.version,
             scope: 'runtime',
             isDirect: false,
             isTransitive: true,
+            parentPackages: resolved.parentPackages,
+            dependencies: resolved.dependencies,
             manifestPath: manifestFile.path,
             lockfilePath: lockFile.path,
             workspacePath,
@@ -235,6 +351,7 @@ export class RustAdapter implements EcosystemAdapter {
                 resolvedUrl: resolved.source,
               },
             ],
+            provenance,
           });
         }
       }

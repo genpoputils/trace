@@ -244,6 +244,26 @@ export class CodebaseAnalyzer {
       }
     }
 
+    // Ensure all relationships have strictly unique IDs
+    const uniqueResolvedRelationships: TraceRelationship[] = [];
+    const seenRelIds = new Set<string>();
+    for (const r of resolvedRelationships) {
+      let finalId = r.id;
+      if (seenRelIds.has(finalId)) {
+        let counter = 2;
+        while (seenRelIds.has(`${r.id}_${counter}`)) {
+          counter++;
+        }
+        finalId = `${r.id}_${counter}`;
+      }
+      seenRelIds.add(finalId);
+      if (finalId !== r.id) {
+        uniqueResolvedRelationships.push({ ...r, id: finalId });
+      } else {
+        uniqueResolvedRelationships.push(r);
+      }
+    }
+
     // Phase 4: Calculate connectivity & Centrality Metrics
     onProgress?.('preparing', {
       current: 1,
@@ -253,7 +273,7 @@ export class CodebaseAnalyzer {
     const inboundCounts: Record<string, number> = {};
     const outboundCounts: Record<string, number> = {};
 
-    for (const r of resolvedRelationships) {
+    for (const r of uniqueResolvedRelationships) {
       if (r.kind === 'calls' || r.kind === 'routes_to' || r.kind === 'reads_from') {
         outboundCounts[r.sourceId] = (outboundCounts[r.sourceId] || 0) + 1;
         inboundCounts[r.targetId] = (inboundCounts[r.targetId] || 0) + 1;
@@ -284,7 +304,7 @@ export class CodebaseAnalyzer {
 
     // Phase 5: Multi-Ecosystem Dependency Intelligence Scan
     const depScanner = EcosystemRegistry.getInstance();
-    const depResult = depScanner.scanRepositorySync(files);
+    const depResult = depScanner.scanRepositorySync(files, allEntities);
     if (depResult.discoveredFiles.length > 0) {
       for (const diag of depResult.diagnostics) {
         if (diag.severity === 'error' || diag.severity === 'warning') {
@@ -307,14 +327,14 @@ export class CodebaseAnalyzer {
         totalLines,
         languages: Array.from(languagesSet),
         totalSymbols: Object.keys(allEntities).length,
-        totalRelationships: resolvedRelationships.length,
+        totalRelationships: uniqueResolvedRelationships.length,
         unresolvedCalls: unresolvedCount,
         routesCount,
         dbQueriesCount,
         mostConnected,
       },
       entities: allEntities,
-      relationships: resolvedRelationships,
+      relationships: uniqueResolvedRelationships,
       files,
       warnings: allWarnings,
       limitations: [

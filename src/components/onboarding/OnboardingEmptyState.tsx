@@ -31,14 +31,13 @@ export const OnboardingEmptyState: React.FC<OnboardingEmptyStateProps> = ({
   return (
     <div
       style={{
-        flex: 1,
+        height: '100%',
         overflowY: 'auto',
         padding: '32px 20px',
         background: 'var(--bg-primary)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'center',
       }}
     >
       <div style={{ maxWidth: 880, width: '100%', display: 'flex', flexDirection: 'column', gap: 28 }}>

@@ -120,6 +120,18 @@ export class DartAdapter implements EcosystemAdapter {
       { key: 'dev_dependencies', scope: 'dev' },
     ];
 
+    const scopePrecedence: Record<DependencyScope, number> = {
+      runtime: 4,
+      build: 3,
+      peer: 2,
+      dev: 1,
+      optional: 0,
+      bundled: 0,
+      test: 0,
+      unknown: 0,
+    };
+    const directDepMap = new Map<string, NormalizedDependency>();
+
     for (const { key, scope } of sections) {
       const depMap = yaml[key];
       if (depMap && typeof depMap === 'object') {
@@ -133,6 +145,23 @@ export class DartAdapter implements EcosystemAdapter {
               : specRec
               ? (specRec.version as string) || (specRec.sdk as string) || '*'
               : '*';
+
+          const depId = `dart:pub:${name.toLowerCase()}@${manifestFile.path}`;
+
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push({
+              sourceFilePath: manifestFile.path,
+              sourceKind: 'manifest',
+              evidenceKind: 'declared_only',
+              rawSpecifier: String(rawSpec),
+            });
+            if (scopePrecedence[scope] > scopePrecedence[existing.scope]) {
+              existing.scope = scope;
+              existing.versionDeclared = String(rawSpec);
+            }
+            continue;
+          }
 
           const resolved = resolvedMap.get(name.toLowerCase());
 
@@ -156,8 +185,8 @@ export class DartAdapter implements EcosystemAdapter {
             });
           }
 
-          dependencies.push({
-            id: `dart:pub:${name.toLowerCase()}@${manifestFile.path}`,
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'dart',
             packageManager: 'pub',
             name,
@@ -170,7 +199,10 @@ export class DartAdapter implements EcosystemAdapter {
             lockfilePath: lockFile?.path,
             workspacePath,
             evidence,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     }

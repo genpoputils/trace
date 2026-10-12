@@ -470,4 +470,169 @@ describe('Multi-Ecosystem Dependency Intelligence Test Suite', () => {
     assert.strictEqual(analysis.dependencies.dependencies.length, 1);
     assert.strictEqual(analysis.dependencies.dependencies[0].name, 'express');
   });
+
+  test('Cargo: multi-section dependency declaration (dependencies and dev-dependencies) produces unique ID, runtime scope, and combined evidence', async () => {
+    const registry = EcosystemRegistry.createDefault();
+    const repoFiles = {
+      'crates/ruff/Cargo.toml': {
+        content: `[package]
+name = "ruff"
+version = "0.1.0"
+
+[dependencies]
+colored = "2.0.0"
+ruff_linter = "0.1.0"
+
+[dev-dependencies]
+colored = { version = "2.0.0", features = ["test-colors"] }
+ruff_linter = "0.1.0"
+`,
+      },
+      'Cargo.lock': {
+        content: `version = 3
+
+[[package]]
+name = "colored"
+version = "2.0.0"
+
+[[package]]
+name = "ruff_linter"
+version = "0.1.0"
+
+[[package]]
+name = "bitflags"
+version = "2.4.1"
+`,
+      },
+    };
+
+    const result = await registry.scanRepository(repoFiles);
+
+    // Filter to crates/ruff/Cargo.toml dependencies
+    const ruffDeps = result.dependencies.filter((d) => d.manifestPath === 'crates/ruff/Cargo.toml');
+    const coloredDep = ruffDeps.find((d) => d.name === 'colored');
+    const linterDep = ruffDeps.find((d) => d.name === 'ruff_linter');
+
+    assert.ok(coloredDep, 'colored dependency found');
+    assert.ok(linterDep, 'ruff_linter dependency found');
+
+    // Exactly one entry for colored and ruff_linter in that manifest
+    assert.strictEqual(ruffDeps.filter((d) => d.name === 'colored').length, 1);
+    assert.strictEqual(ruffDeps.filter((d) => d.name === 'ruff_linter').length, 1);
+
+    // Runtime scope takes precedence over dev scope
+    assert.strictEqual(coloredDep.scope, 'runtime');
+    assert.strictEqual(linterDep.scope, 'runtime');
+
+    // Evidence from both [dependencies] and [dev-dependencies] is preserved
+    const coloredManifestEvidence = coloredDep.evidence.filter((e) => e.sourceKind === 'manifest');
+    assert.strictEqual(coloredManifestEvidence.length, 2, 'Preserves both section declarations in evidence');
+
+    // All dependency IDs across the repository scan are strictly unique
+    const ids = result.dependencies.map((d) => d.id);
+    const uniqueIds = new Set(ids);
+    assert.strictEqual(ids.length, uniqueIds.size, 'All dependency IDs must be strictly unique');
+  });
+
+  test('Cargo workspace: multiple crates sharing root Cargo.lock do not duplicate transitive dependencies', async () => {
+    const registry = EcosystemRegistry.createDefault();
+    const repoFiles = {
+      'crates/ruff/Cargo.toml': {
+        content: `[package]\nname = "ruff"\nversion = "0.1.0"\n\n[dependencies]\ncolored = "2.0.0"\n`,
+      },
+      'crates/ruff_linter/Cargo.toml': {
+        content: `[package]\nname = "ruff_linter"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1.0.0"\n`,
+      },
+      'Cargo.lock': {
+        content: `version = 3\n\n[[package]]\nname = "colored"\nversion = "2.0.0"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n\n[[package]]\nname = "bitflags"\nversion = "2.4.1"\n`,
+      },
+    };
+
+    const result = await registry.scanRepository(repoFiles);
+
+    // bitflags is a transitive dependency in Cargo.lock
+    const bitflagsDeps = result.dependencies.filter((d) => d.name === 'bitflags');
+    assert.strictEqual(bitflagsDeps.length, 1, 'Transitive bitflags appears exactly once');
+
+    // All IDs in result.dependencies are guaranteed unique
+    const ids = result.dependencies.map((d) => d.id);
+    const uniqueIds = new Set(ids);
+    assert.strictEqual(ids.length, uniqueIds.size, 'Every dependency ID is distinct');
+  });
+
+  test('Pipfile: packages declared in both [packages] and [dev-packages] produce unique ID and runtime scope', async () => {
+    const registry = EcosystemRegistry.createDefault();
+    const repoFiles = {
+      'Pipfile': {
+        content: `[packages]\nrequests = "==2.31.0"\n\n[dev-packages]\nrequests = "==2.31.0"\npytest = "*"\n`,
+      },
+    };
+
+    const result = await registry.scanRepository(repoFiles);
+    const requestsDeps = result.dependencies.filter((d) => d.name === 'requests');
+
+    assert.strictEqual(requestsDeps.length, 1, 'requests is deduplicated');
+    assert.strictEqual(requestsDeps[0].scope, 'runtime');
+    assert.strictEqual(requestsDeps[0].evidence.length, 2, 'Preserves both declarations');
+
+    const ids = result.dependencies.map((d) => d.id);
+    const uniqueIds = new Set(ids);
+    assert.strictEqual(ids.length, uniqueIds.size);
+  });
+
+  test('Python requirements.txt & pyproject.toml: duplicate entries and overlapping dev/runtime scopes produce unique IDs', async () => {
+    const registry = EcosystemRegistry.createDefault();
+    const repoFiles = {
+      'requirements.txt': {
+        content: `typing-extensions>=4.0; python_version < '3.8'\ntyping-extensions>=4.5; python_version >= '3.8'\nrequests==2.31.0\nrequests==2.31.0\n`,
+      },
+      'pyproject.toml': {
+        content: `[tool.poetry]\nname = "testpkg"\nversion = "0.1.0"\n\n[tool.poetry.dependencies]\npython = "^3.10"\npytest = "^7.0"\n\n[tool.poetry.group.dev.dependencies]\npytest = "^7.0"\n`,
+      },
+    };
+
+    const result = await registry.scanRepository(repoFiles);
+    const ids = result.dependencies.map((d) => d.id);
+    const uniqueIds = new Set(ids);
+    assert.strictEqual(ids.length, uniqueIds.size, 'All python dependency IDs are strictly unique');
+
+    const reqDeps = result.dependencies.filter((d) => d.manifestPath === 'requirements.txt');
+    const typingExt = reqDeps.find((d) => d.name === 'typing-extensions');
+    assert.ok(typingExt);
+    assert.strictEqual(typingExt.evidence.length, 2, 'typing-extensions merges evidence from both lines');
+
+    const pyprojectDeps = result.dependencies.filter((d) => d.manifestPath === 'pyproject.toml');
+    const pytestDep = pyprojectDeps.find((d) => d.name === 'pytest');
+    assert.ok(pytestDep);
+    assert.strictEqual(pytestDep.scope, 'runtime', 'runtime scope takes precedence over dev');
+    assert.strictEqual(pyprojectDeps.filter((d) => d.name === 'pytest').length, 1);
+  });
+
+  test('Go, .NET, Maven, and Ruby: duplicate manifest entries produce unique IDs and merged evidence', async () => {
+    const registry = EcosystemRegistry.createDefault();
+    const repoFiles = {
+      'go.mod': {
+        content: `module test\ngo 1.21\n\nrequire (\n\tgithub.com/stretchr/testify v1.8.4\n\tgithub.com/stretchr/testify v1.8.4\n)\n`,
+      },
+      'App.csproj': {
+        content: `<Project Sdk="Microsoft.NET.Sdk">\n  <ItemGroup>\n    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />\n    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />\n  </ItemGroup>\n</Project>`,
+      },
+      'pom.xml': {
+        content: `<project><dependencies>\n  <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version></dependency>\n  <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version></dependency>\n</dependencies></project>`,
+      },
+      'Gemfile': {
+        content: `source 'https://rubygems.org'\ngem 'puma', '~> 5.0'\ngem 'puma', '~> 5.0'\n`,
+      },
+    };
+
+    const result = await registry.scanRepository(repoFiles);
+    const ids = result.dependencies.map((d) => d.id);
+    const uniqueIds = new Set(ids);
+    assert.strictEqual(ids.length, uniqueIds.size, 'Every dependency ID across all ecosystems is unique');
+
+    assert.strictEqual(result.dependencies.filter((d) => d.name === 'github.com/stretchr/testify').length, 1);
+    assert.strictEqual(result.dependencies.filter((d) => d.name === 'Newtonsoft.Json').length, 1);
+    assert.strictEqual(result.dependencies.filter((d) => d.name === 'junit:junit').length, 1);
+    assert.strictEqual(result.dependencies.filter((d) => d.name === 'puma').length, 1);
+  });
 });

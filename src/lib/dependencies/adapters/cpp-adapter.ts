@@ -8,6 +8,7 @@ import {
   AdapterParseContext,
   AdapterParseResult,
   NormalizedDependency,
+  DependencyEvidence,
   ManifestDiagnostic,
   PackageManagerType,
 } from '../types';
@@ -250,6 +251,8 @@ export class CppAdapter implements EcosystemAdapter {
     const diagnostics: ManifestDiagnostic[] = [];
 
     const lines = manifestFile.content.split('\n');
+    const directDepMap = new Map<string, NormalizedDependency>();
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       // find_package(Boost 1.70 REQUIRED)
@@ -257,8 +260,28 @@ export class CppAdapter implements EcosystemAdapter {
       if (fpMatch) {
         const pkgName = fpMatch[1];
         const ver = fpMatch[2];
-        dependencies.push({
-          id: `cpp:cmake:${pkgName.toLowerCase()}@${manifestFile.path}`,
+        const depId = `cpp:cmake:${pkgName.toLowerCase()}@${manifestFile.path}`;
+
+        const evItem: DependencyEvidence = {
+          sourceFilePath: manifestFile.path,
+          sourceKind: 'manifest',
+          evidenceKind: 'declared_only',
+          rawSpecifier: ver,
+          line: i + 1,
+          snippet: line,
+        };
+
+        const existing = directDepMap.get(depId);
+        if (existing) {
+          existing.evidence.push(evItem);
+          if (!existing.versionDeclared && ver) {
+            existing.versionDeclared = ver;
+          }
+          continue;
+        }
+
+        const dep: NormalizedDependency = {
+          id: depId,
           ecosystem: 'cpp',
           packageManager: 'cmake',
           name: pkgName,
@@ -268,17 +291,11 @@ export class CppAdapter implements EcosystemAdapter {
           isDirect: true,
           isTransitive: false,
           manifestPath: manifestFile.path,
-          evidence: [
-            {
-              sourceFilePath: manifestFile.path,
-              sourceKind: 'manifest',
-              evidenceKind: 'declared_only',
-              rawSpecifier: ver,
-              line: i + 1,
-              snippet: line,
-            },
-          ],
-        });
+          evidence: [evItem],
+        };
+
+        directDepMap.set(depId, dep);
+        dependencies.push(dep);
       }
     }
 

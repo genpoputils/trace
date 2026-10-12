@@ -31,6 +31,10 @@ import {
   ElixirAdapter,
 } from './adapters';
 import { getDirname } from './utils';
+import { buildDependencyProvenance, reconcileWorkspaceProvenance } from './provenance';
+import { mapPackagesToSourceUsage } from './source-usage';
+import { buildPackageDependencyGraph } from './graph';
+import { TraceEntity } from '../types/trace';
 
 export class EcosystemRegistry {
   private adapters: EcosystemAdapter[] = [];
@@ -174,7 +178,8 @@ export class EcosystemRegistry {
    * Executes synchronous multi-ecosystem dependency intelligence scan on a repository files map.
    */
   public scanRepositorySync(
-    files: Record<string, { path?: string; content: string }>
+    files: Record<string, { path?: string; content: string }>,
+    entities?: Record<string, TraceEntity>
   ): DependencyScanResult {
     const filePaths = Object.keys(files);
     const discoveredFiles = this.detectFiles(filePaths);
@@ -189,18 +194,35 @@ export class EcosystemRegistry {
     };
 
     const allDependencies: NormalizedDependency[] = [];
+    const dependenciesById = new Map<string, NormalizedDependency>();
     const allWorkspaces: WorkspaceDescriptor[] = [];
     const allDiagnostics: ManifestDiagnostic[] = [];
+
+    // Scope precedence for cross-manifest consolidation
+    const scopePrecedence: Record<string, number> = {
+      runtime: 4,
+      build: 3,
+      peer: 2,
+      dev: 1,
+      optional: 0,
+    };
 
     // Filter manifests to parse
     const manifestFiles = discoveredFiles.filter((df) => df.kind === 'manifest');
 
+    const findFile = (predicate: (path: string) => boolean) => {
+      const foundPath = filePaths.find((p) => predicate(p.replace(/\\/g, '/').replace(/^\/+/, '')));
+      return foundPath ? getFile(foundPath) : undefined;
+    };
+
     // Context for adapters
     const context: AdapterParseContext = {
       getFile,
+      findFile,
       discoveredFiles,
       workspaces: allWorkspaces,
     };
+
 
     // If multiple manifests for different ecosystems are present, scan each
     for (const manifestInfo of manifestFiles) {
@@ -226,7 +248,64 @@ export class EcosystemRegistry {
         } else {
           const syncResult = result as AdapterParseResult;
           for (const dep of syncResult.dependencies) {
-            allDependencies.push(dep);
+            // Ensure provenance is attached even if a custom adapter omitted it
+            if (!dep.provenance) {
+              dep.provenance = buildDependencyProvenance({
+                name: dep.name,
+                ecosystem: dep.ecosystem,
+                packageManager: dep.packageManager,
+                manifestPath: dep.manifestPath,
+                lockfilePath: dep.lockfilePath,
+                declaredSpecifier: dep.versionDeclared,
+                resolvedVersion: dep.versionResolved,
+                isDirect: dep.isDirect,
+                alias: dep.alias,
+                getFile,
+              });
+            }
+            if (dep.provenance.installed.version && !dep.versionInstalled) {
+              dep.versionInstalled = dep.provenance.installed.version;
+            }
+
+            const existing = dependenciesById.get(dep.id);
+            if (existing) {
+              // Deduplicate and consolidate shared or duplicate dependency entries
+              if (dep.evidence) {
+                for (const ev of dep.evidence) {
+                  const alreadyHas = existing.evidence.some(
+                    (e) =>
+                      e.sourceFilePath === ev.sourceFilePath &&
+                      e.sourceKind === ev.sourceKind &&
+                      e.rawSpecifier === ev.rawSpecifier &&
+                      e.evidenceKind === ev.evidenceKind
+                  );
+                  if (!alreadyHas) {
+                    existing.evidence.push(ev);
+                  }
+                }
+              }
+              if (dep.parentPackages) {
+                const parents = new Set(existing.parentPackages || []);
+                for (const p of dep.parentPackages) parents.add(p);
+                existing.parentPackages = Array.from(parents);
+              }
+              if (dep.dependencies) {
+                const children = new Set(existing.dependencies || []);
+                for (const c of dep.dependencies) children.add(c);
+                existing.dependencies = Array.from(children);
+              }
+              const existingScore = scopePrecedence[existing.scope] ?? 0;
+              const newScore = scopePrecedence[dep.scope] ?? 0;
+              if (newScore > existingScore) {
+                existing.scope = dep.scope;
+              }
+              if (!existing.versionInstalled && dep.versionInstalled) {
+                existing.versionInstalled = dep.versionInstalled;
+              }
+            } else {
+              dependenciesById.set(dep.id, dep);
+              allDependencies.push(dep);
+            }
           }
           for (const ws of syncResult.workspaces) {
             allWorkspaces.push(ws);
@@ -243,6 +322,12 @@ export class EcosystemRegistry {
           message: `Unhandled exception during adapter parse: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
+    }
+
+    // Cross-manifest and workspace provenance reconciliation
+    const { diagnostics: reconDiags } = reconcileWorkspaceProvenance(allDependencies);
+    for (const d of reconDiags) {
+      allDiagnostics.push(d);
     }
 
     // Compute statistics
@@ -266,6 +351,10 @@ export class EcosystemRegistry {
 
     let directCount = 0;
     let transitiveCount = 0;
+    let withResolvedVersionCount = 0;
+    let declaredOnlyCount = 0;
+    let withInstalledVersionCount = 0;
+    let conflictsCount = 0;
 
     for (const dep of allDependencies) {
       ecosystemsSet.add(dep.ecosystem);
@@ -273,6 +362,20 @@ export class EcosystemRegistry {
       ecosystemCounts[dep.ecosystem] = (ecosystemCounts[dep.ecosystem] || 0) + 1;
       if (dep.isDirect) directCount++;
       if (dep.isTransitive) transitiveCount++;
+
+      if (dep.versionResolved) {
+        withResolvedVersionCount++;
+      } else if (dep.isDirect) {
+        declaredOnlyCount++;
+      }
+
+      if (dep.versionInstalled) {
+        withInstalledVersionCount++;
+      }
+
+      if (dep.provenance?.hasConflict) {
+        conflictsCount++;
+      }
     }
 
     for (const df of discoveredFiles) {
@@ -284,6 +387,15 @@ export class EcosystemRegistry {
       (df) => df.kind === 'lockfile' || df.kind === 'checksum_file'
     ).length;
 
+    // Phase 6: Map dependencies to source-code usage and construct typed package dependency graph
+    const sourceUsageResult = mapPackagesToSourceUsage(allDependencies, files, entities);
+    const graph = buildPackageDependencyGraph({
+      dependencies: allDependencies,
+      sourceUsages: sourceUsageResult.usagesByPackageId,
+      workspaces: allWorkspaces,
+      coverage: sourceUsageResult.coverage,
+    });
+
     return {
       ecosystems: Array.from(ecosystemsSet),
       packageManagers: Array.from(packageManagersSet),
@@ -291,6 +403,9 @@ export class EcosystemRegistry {
       workspaces: allWorkspaces,
       dependencies: allDependencies,
       diagnostics: allDiagnostics,
+      graph,
+      sourceUsages: sourceUsageResult.usagesByPackageId,
+      coverage: sourceUsageResult.coverage,
       stats: {
         totalManifests: manifestFiles.length,
         totalLockfiles: lockfileCount,
@@ -298,6 +413,11 @@ export class EcosystemRegistry {
         directCount,
         transitiveCount,
         ecosystemCounts,
+        withResolvedVersionCount,
+        declaredOnlyCount,
+        withInstalledVersionCount,
+        conflictsCount,
+        totalSourceUsagesCount: sourceUsageResult.totalUsagesCount,
       },
       capabilityMatrix: ECOSYSTEM_CAPABILITY_MATRIX,
     };
@@ -307,8 +427,20 @@ export class EcosystemRegistry {
    * Asynchronous wrapper for multi-ecosystem repository scanning.
    */
   public async scanRepository(
-    files: Record<string, { path?: string; content: string }>
+    files: Record<string, { path?: string; content: string }>,
+    entities?: Record<string, TraceEntity>
   ): Promise<DependencyScanResult> {
-    return this.scanRepositorySync(files);
+    return this.scanRepositorySync(files, entities);
+  }
+
+  /**
+   * Alias for scanRepository.
+   */
+  public async scanCodebase(
+    files: Record<string, { path?: string; content: string }>,
+    entities?: Record<string, TraceEntity>
+  ): Promise<DependencyScanResult> {
+    return this.scanRepository(files, entities);
   }
 }
+

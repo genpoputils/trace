@@ -53,6 +53,17 @@ export type DependencyScope =
   | 'test'
   | 'unknown';
 
+export const SCOPE_PRECEDENCE: Record<DependencyScope, number> = {
+  runtime: 7,
+  build: 6,
+  peer: 5,
+  bundled: 4,
+  test: 3,
+  dev: 2,
+  optional: 1,
+  unknown: 0,
+};
+
 export type EvidenceKind =
   | 'declared_only'
   | 'resolved_lockfile'
@@ -75,7 +86,10 @@ export type DiagnosticCode =
   | 'incomplete_scan'
   | 'conflicting_manifests'
   | 'unsupported_feature'
-  | 'empty_manifest';
+  | 'empty_manifest'
+  | 'version_conflict'
+  | 'stale_lockfile'
+  | 'missing_installed_environment';
 
 export interface DependencyEvidence {
   sourceFilePath: string;
@@ -89,6 +103,56 @@ export interface DependencyEvidence {
   snippet?: string;
 }
 
+export type VersionProvenanceStatus =
+  | 'established' // Concrete evidence found and verified
+  | 'unavailable' // No evidence available (e.g. missing lockfile, no installed environment)
+  | 'incomplete' // Evidence is partial or unverified
+  | 'conflicting'; // Conflict between declared range and resolved lockfile, or between manifests
+
+export interface VersionProvenanceDetail {
+  version?: string;
+  status: VersionProvenanceStatus;
+  sourceFilePath?: string;
+  sourcePath?: string; // Convenient alias for sourceFilePath
+  sourceKind?: 'manifest' | 'lockfile' | 'installed' | 'workspace_config' | 'checksum_file';
+  evidenceKind?: EvidenceKind;
+  rawSpecifier?: string;
+  isExactPin?: boolean;
+  isRange?: boolean;
+  integrity?: string;
+  resolvedUrl?: string;
+  details?: string;
+}
+
+export type VersionConflictKind =
+  | 'range_mismatch' // Lockfile resolved version does not satisfy declared range/pin
+  | 'workspace_version_conflict' // Multiple workspaces declare incompatible versions
+  | 'duplicate_version_in_workspace' // Same package resolved or declared at multiple different versions across tree
+  | 'missing_lockfile_resolution' // Declared in manifest but missing in lockfile
+  | 'stale_lockfile' // Lockfile exists but is outdated or missing entries
+  | 'stale_installed_disk' // Installed disk version does not match lockfile or manifest
+  | 'none';
+
+export interface VersionConflict {
+  kind: VersionConflictKind;
+  severity: 'warning' | 'error' | 'info';
+  message: string;
+  expectedRange?: string;
+  actualVersion?: string;
+  conflictingSourcePaths?: string[];
+}
+
+export interface DependencyVersionProvenance {
+  status: VersionProvenanceStatus;
+  satisfiesRange?: boolean;
+  declared: VersionProvenanceDetail;
+  resolved: VersionProvenanceDetail;
+  installed: VersionProvenanceDetail;
+  hasConflict: boolean;
+  conflicts: VersionConflict[];
+}
+
+
 export interface NormalizedDependency {
   id: string; // unique stable identifier e.g. "javascript:npm:express@package.json"
   ecosystem: EcosystemType;
@@ -96,13 +160,19 @@ export interface NormalizedDependency {
   name: string;
   versionDeclared?: string;
   versionResolved?: string;
+  versionInstalled?: string; // ONLY when local installed disk/env evidence exists
+  alias?: string; // Alias or package rename if applicable
   scope: DependencyScope;
   isDirect: boolean;
   isTransitive: boolean;
+  isWorkspace?: boolean;
+  parentPackages?: string[]; // Names or IDs of parent packages that depend on this package
+  dependencies?: string[]; // Outgoing child dependency package names
   manifestPath: string;
   lockfilePath?: string;
   workspacePath?: string;
   evidence: DependencyEvidence[];
+  provenance?: DependencyVersionProvenance;
   notes?: string[];
   warnings?: string[];
 }
@@ -158,9 +228,11 @@ export interface EcosystemCapability {
 
 export interface AdapterParseContext {
   getFile: (filePath: string) => { path: string; content: string } | undefined;
+  findFile?: (predicate: (path: string) => boolean) => { path: string; content: string } | undefined;
   discoveredFiles: DiscoveredDependencyFile[];
   workspaces: WorkspaceDescriptor[];
 }
+
 
 export interface AdapterParseResult {
   dependencies: NormalizedDependency[];
@@ -184,6 +256,26 @@ export interface EcosystemAdapter {
   ): Promise<AdapterParseResult> | AdapterParseResult;
 }
 
+export interface SourceLanguageCoverage {
+  ecosystem: EcosystemType;
+  language: string;
+  detectedFilesCount: number;
+  scannedFilesCount: number;
+  isSupported: boolean;
+  isComplete: boolean;
+  hasSufficientCoverage?: boolean;
+  unsupportedReasons?: string[];
+}
+
+export interface SourceScanCoverage {
+  totalSourceFilesDetected: number;
+  totalSourceFilesScanned: number;
+  languages: Record<string, SourceLanguageCoverage>;
+  unsupportedExtensions: string[];
+  unsupportedFileTypes?: string[];
+  canMakeNegativeUsageClaim?: boolean;
+}
+
 export interface DependencyScanResult {
   ecosystems: EcosystemType[];
   packageManagers: PackageManagerType[];
@@ -191,6 +283,9 @@ export interface DependencyScanResult {
   workspaces: WorkspaceDescriptor[];
   dependencies: NormalizedDependency[];
   diagnostics: ManifestDiagnostic[];
+  graph?: PackageDependencyGraph;
+  sourceUsages?: Record<string, PackageSourceUsage[]>; // Keyed by packageId
+  coverage?: SourceScanCoverage;
   stats: {
     totalManifests: number;
     totalLockfiles: number;
@@ -198,6 +293,141 @@ export interface DependencyScanResult {
     directCount: number;
     transitiveCount: number;
     ecosystemCounts: Record<EcosystemType, number>;
+    withResolvedVersionCount: number;
+    declaredOnlyCount: number;
+    withInstalledVersionCount: number;
+    conflictsCount: number;
+    totalSourceUsagesCount?: number;
+    unreferencedPackagesCount?: number;
   };
   capabilityMatrix: EcosystemCapability[];
 }
+
+/**
+ * Typed edge relationship kinds for package dependency graph (GT-013)
+ */
+export type PackageDependencyEdgeType =
+  | 'runtime' // Direct runtime production dependency
+  | 'dev' // Development dependency
+  | 'peer' // Peer dependency
+  | 'optional' // Optional dependency
+  | 'transitive' // Transitive resolution edge (parent package -> child dependency)
+  | 'workspace'; // Monorepo inter-workspace sibling reference
+
+/**
+ * Node in the typed package dependency graph (GT-013)
+ */
+export interface PackageDependencyNode {
+  id: string; // Unique stable identifier: pkg:${ecosystem}:${name}@${version || 'declared'}:${manifestPath}
+  name: string;
+  ecosystem: EcosystemType;
+  packageManager: PackageManagerType;
+  versionDeclared?: string;
+  versionResolved?: string;
+  versionInstalled?: string;
+  alias?: string;
+  scope: DependencyScope;
+  isDirect: boolean;
+  isTransitive: boolean;
+  isWorkspace?: boolean;
+  parentPackages?: string[];
+  dependencies?: string[];
+  manifestPath: string;
+  lockfilePath?: string;
+  workspacePath?: string;
+  provenance?: DependencyVersionProvenance;
+  dependenciesCount: number;
+  dependentsCount: number;
+  sourceUsagesCount: number;
+  health: DependencyHealthIndicator;
+}
+
+/**
+ * Typed edge in the package dependency graph (GT-013)
+ */
+export interface PackageDependencyEdge {
+  id: string; // ${sourceId}->${targetId}:${type}
+  source: string;
+  target: string;
+  type: PackageDependencyEdgeType;
+  isTransitive: boolean;
+  versionRange?: string;
+  resolvedVersion?: string;
+  sourceFilePath: string;
+}
+
+/**
+ * Typed Package Dependency Graph model (GT-013)
+ */
+export interface PackageDependencyGraph {
+  nodes: Record<string, PackageDependencyNode>;
+  edges: PackageDependencyEdge[];
+  rootNodeIds: string[]; // Direct manifest dependencies
+  stats: {
+    totalNodes: number;
+    totalEdges: number;
+    directCount: number;
+    transitiveCount: number;
+    multiVersionCount: number;
+  };
+}
+
+/**
+ * Mapping of third-party package to source-code usage (GT-014)
+ */
+export interface PackageSourceUsage {
+  id: string; // Unique stable usage ID: ${packageId}#${filePath}:${startLine}
+  packageId: string;
+  packageName: string;
+  ecosystem: EcosystemType;
+  filePath: string;
+  location: {
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+  };
+  importedSymbol?: string; // e.g. "useState", "default", "*", "Router"
+  localAlias?: string; // e.g. "React", "get"
+  snippet?: string;
+  sourceSnippet?: string;
+  enclosingEntityId?: string; // ID of AST entity enclosing this import/reference
+  enclosingEntityName?: string;
+  confidence: 'static_import' | 'dynamic_require' | 'subpath_import' | 'uncertain_alias';
+  isDirectImport: boolean;
+  evidenceNote: string;
+}
+
+/**
+ * Evidence-backed health signal kinds (GT-016)
+ */
+export type DependencyHealthSignalKind =
+  | 'clean' // Verified against lockfile with matching range
+  | 'unlocked' // Missing lockfile resolution
+  | 'conflict' // Range mismatch or workspace version conflict
+  | 'duplicate' // Multiple versions present across workspaces
+  | 'stale_disk' // Installed disk version disagrees with lockfile
+  | 'unreferenced' // Declared in manifest but zero source usages found in supported & covered source scan
+  | 'analysis_unavailable'; // Source usage analysis unavailable or unsupported for language
+
+export interface DependencyHealthSignal {
+  kind: DependencyHealthSignalKind;
+  severity: 'healthy' | 'warning' | 'error' | 'info';
+  title: string;
+  message: string;
+  evidencePath?: string;
+  evidenceSnippet?: string;
+}
+
+export interface DependencyHealthIndicator {
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  signals: DependencyHealthSignal[];
+  isClean?: boolean;
+  hasConflict: boolean;
+  isUnreferenced: boolean;
+  isUnlocked: boolean;
+  isDuplicate: boolean;
+  coverageStatus?: 'covered' | 'partial' | 'unsupported' | 'unscanned';
+}
+

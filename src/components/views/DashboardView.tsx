@@ -39,7 +39,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div
       style={{
-        flex: 1,
+        height: '100%',
         overflowY: 'auto',
         padding: 24,
         background: 'var(--bg-primary)',

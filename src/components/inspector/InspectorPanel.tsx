@@ -10,6 +10,8 @@ import {
   Layers,
   ChevronRight,
 } from 'lucide-react';
+import { PackageInspector } from './PackageInspector';
+import { PackageDependencyNode, NormalizedDependency } from '@/lib/dependencies/types';
 
 interface InspectorPanelProps {
   analysis: ProjectAnalysis;
@@ -57,7 +59,42 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     );
   }, [analysis, selectedEntityId]);
 
+  // Check if selectedEntityId is a Package Dependency Node or Dependency
+  const packageNode: PackageDependencyNode | null = React.useMemo(() => {
+    if (!selectedEntityId) return null;
+    const graphNodes = analysis.dependencies?.graph?.nodes;
+    if (graphNodes && graphNodes[selectedEntityId]) {
+      return graphNodes[selectedEntityId];
+    }
+    return null;
+  }, [analysis.dependencies, selectedEntityId]);
+
+  const dependency: NormalizedDependency | null = React.useMemo(() => {
+    if (!selectedEntityId || packageNode) return null;
+    return analysis.dependencies?.dependencies?.find((d) => d.id === selectedEntityId) || null;
+  }, [analysis.dependencies, selectedEntityId, packageNode]);
+
   if (!entity) {
+    if (packageNode || dependency) {
+      const activeId = packageNode ? packageNode.id : dependency!.id;
+      return (
+        <aside
+          className={`right-panel ${isDrawer ? 'as-drawer' : ''}`}
+          aria-label="Package Inspector Panel"
+          style={{ overflowY: 'auto' }}
+        >
+          <PackageInspector
+            packageNode={packageNode}
+            dependency={dependency}
+            graph={analysis.dependencies?.graph}
+            sourceUsages={analysis.dependencies?.sourceUsages?.[activeId] || []}
+            onSelectPackage={onSelectEntity}
+            onClose={onClose}
+          />
+        </aside>
+      );
+    }
+
     return (
       <aside
         className={`right-panel ${isDrawer ? 'as-drawer' : ''}`}
@@ -76,7 +113,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           </button>
         </div>
         <div style={{ padding: 36, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-          Select any function, route, or class in the graph, file explorer, or trace view to inspect its identity, parameters, and relationships.
+          Select any function, route, class, or package in the graph, file explorer, or trace view to inspect its identity, parameters, and relationships.
         </div>
       </aside>
     );
@@ -295,12 +332,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {inbound.map((rel) => {
+                  {inbound.map((rel, idx) => {
                     const caller = analysis.entities[rel.sourceId];
                     if (!caller) return null;
                     return (
                       <div
-                        key={rel.id}
+                        key={`${rel.id}-${idx}`}
                         onClick={() => onSelectEntity(caller.id)}
                         style={{
                           padding: 8,
@@ -345,11 +382,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {outbound.map((rel) => {
+                  {outbound.map((rel, idx) => {
                     const callee = analysis.entities[rel.targetId];
                     return (
                       <div
-                        key={rel.id}
+                        key={`${rel.id}-${idx}`}
                         onClick={() => callee && onSelectEntity(callee.id)}
                         style={{
                           padding: 8,
