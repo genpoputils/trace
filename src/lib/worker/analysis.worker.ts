@@ -59,7 +59,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       progressUpdate('parsing', `Extracted ${fileCount} files. Parsing AST...`, 0, fileCount);
 
       const analyzer = new CodebaseAnalyzer();
-      const analysis = analyzer.analyzeProject(
+      const analysis = await analyzer.analyzeProjectAsync(
         ingestion.projectName,
         ingestion.files,
         (stage, prog) => {
@@ -97,7 +97,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       cancelledJobs.delete(req.id);
     } else if (req.type === 'ANALYZE_FILES') {
       const analyzer = new CodebaseAnalyzer();
-      const analysis = analyzer.analyzeProject(
+      const analysis = await analyzer.analyzeProjectAsync(
         req.projectName,
         req.files,
         (stage, prog) => {

@@ -262,17 +262,36 @@ export class BrowserAnalysisService {
       this.activeAbortController = null;
     }
 
-    if (this.currentJobId && this.worker) {
-      try {
-        this.worker.postMessage({ type: 'CANCEL', id: this.currentJobId });
-      } catch {}
+    const jobToCancel = this.currentJobId;
+    this.currentJobId = null;
+
+    if (this.worker) {
+      // 1. Send cooperative CANCEL message
+      if (jobToCancel) {
+        try {
+          this.worker.postMessage({ type: 'CANCEL', id: jobToCancel });
+        } catch {}
+      }
+      // 2. In browser environments, terminate the worker immediately to stop runaway CPU execution
+      if (typeof Worker !== 'undefined' && this.worker instanceof Worker) {
+        try {
+          this.worker.terminate();
+        } catch {}
+        this.worker = null;
+        this.workerAvailable = false;
+        // Reinitialize fresh worker for subsequent operations
+        this.initWorker();
+      }
     }
 
     this.failAllPendingJobs(new Error(reason));
 
-    const updatedStages = this.sessionState.stages.map((s) =>
-      s.status === 'running' ? { ...s, status: 'failed' as const, message: 'Cancelled' } : s
-    );
+    const updatedStages = this.sessionState.stages.map((s) => {
+      if (s.status === 'running') {
+        return { ...s, status: 'failed' as const, message: 'Cancelled' };
+      }
+      return s;
+    });
 
     this.notify({
       status: 'cancelled',
@@ -364,14 +383,16 @@ export class BrowserAnalysisService {
       onProgress?.(stageId, prog);
 
       const stages = this.sessionState.stages.map((s) => {
+        const currentIndex = initialStages.findIndex((x) => x.id === stageId);
+        const thisIndex = initialStages.findIndex((x) => x.id === s.id);
         if (s.id === stageId) {
           return { ...s, status: 'running' as const, current: prog.current, total: prog.total, message: prog.message };
         }
-        // If it was previous and running, mark completed
-        const currentIndex = initialStages.findIndex((x) => x.id === stageId);
-        const thisIndex = initialStages.findIndex((x) => x.id === s.id);
-        if (thisIndex < currentIndex && s.status === 'running') {
+        if (thisIndex < currentIndex) {
           return { ...s, status: 'completed' as const };
+        }
+        if (thisIndex > currentIndex) {
+          return { ...s, status: 'pending' as const };
         }
         return s;
       });
@@ -458,7 +479,7 @@ export class BrowserAnalysisService {
         });
 
         const analyzer = new CodebaseAnalyzer();
-        const analysis = analyzer.analyzeProject(
+        const analysis = await analyzer.analyzeProjectAsync(
           ingestion.projectName,
           ingestion.files,
           (stage, prog) => updateStageProgress(stage, prog),
@@ -608,7 +629,7 @@ export class BrowserAnalysisService {
       analysis = res.analysis;
     } else {
       const analyzer = new CodebaseAnalyzer();
-      analysis = analyzer.analyzeProject(projectName, files, onProgress, {
+      analysis = await analyzer.analyzeProjectAsync(projectName, files, onProgress, {
         signal: this.activeAbortController?.signal,
       });
     }
@@ -677,13 +698,16 @@ export class BrowserAnalysisService {
       onProgress?.(stageId, prog);
 
       const stages = this.sessionState.stages.map((s) => {
+        const currentIndex = initialStages.findIndex((x) => x.id === stageId);
+        const thisIndex = initialStages.findIndex((x) => x.id === s.id);
         if (s.id === stageId) {
           return { ...s, status: 'running' as const, current: prog.current, total: prog.total, message: prog.message };
         }
-        const currentIndex = initialStages.findIndex((x) => x.id === stageId);
-        const thisIndex = initialStages.findIndex((x) => x.id === s.id);
-        if (thisIndex < currentIndex && s.status === 'running') {
+        if (thisIndex < currentIndex) {
           return { ...s, status: 'completed' as const };
+        }
+        if (thisIndex > currentIndex) {
+          return { ...s, status: 'pending' as const };
         }
         return s;
       });

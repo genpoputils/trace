@@ -125,15 +125,27 @@ export const AnalysisStatusSurface: React.FC<AnalysisStatusSurfaceProps> = ({
     }
   };
 
-  const isIndeterminate =
-    session.progress.total <= 0 ||
-    session.progress.current < 0 ||
-    (session.status === 'running' && session.progress.total === 100 && session.progress.current <= 15);
+  // Meaningful overall percentage computed across pipeline stages
+  const totalStages = session.stages.length;
+  const completedStagesCount = session.stages.filter((s) => s.status === 'completed').length;
+  const isOverallIndeterminate =
+    totalStages === 0 ||
+    (session.progress.total <= 1 && completedStagesCount === 0) ||
+    session.progress.current < 0;
 
-  const percent =
-    !isIndeterminate && session.progress.total > 0
-      ? Math.min(100, Math.round((session.progress.current / session.progress.total) * 100))
-      : null;
+  let overallPercent: number | null = null;
+  if (session.status === 'completed') {
+    overallPercent = 100;
+  } else if (session.status === 'running' && !isOverallIndeterminate && totalStages > 0) {
+    const stageWeight = 100 / totalStages;
+    let currentStageFraction = 0;
+    if (session.progress.total > 1 && session.progress.current >= 0) {
+      currentStageFraction = Math.min(0.95, session.progress.current / session.progress.total);
+    }
+    const computed = Math.round(completedStagesCount * stageWeight + currentStageFraction * stageWeight);
+    // Never show 100% while analysis is still actively running
+    overallPercent = Math.min(95, Math.max(5, computed));
+  }
 
   return (
     <div
@@ -218,21 +230,29 @@ export const AnalysisStatusSurface: React.FC<AnalysisStatusSurfaceProps> = ({
         </div>
       </div>
 
-      {/* 2. PROGRESS BAR (Visible while running or partial) */}
+      {/* 2. PROGRESS BAR (Visible while running) */}
       {session.status === 'running' && (
         <div className="surface-progress-track">
           <div
-            className={`surface-progress-fill ${isIndeterminate ? 'indeterminate' : ''}`}
-            style={{ width: isIndeterminate ? '35%' : `${percent}%` }}
+            className={`surface-progress-fill ${isOverallIndeterminate || overallPercent === null ? 'indeterminate' : ''}`}
+            style={{ width: isOverallIndeterminate || overallPercent === null ? '35%' : `${overallPercent}%` }}
           />
         </div>
       )}
 
       {/* 3. WORK COMPLETED COUNTER */}
-      {session.status === 'running' && !isIndeterminate && session.progress.total > 0 && (
+      {session.status === 'running' && (
         <div className="surface-work-counters">
-          <span>Processed <strong>{session.progress.current}</strong> of <strong>{session.progress.total}</strong> items</span>
-          <span>{percent}%</span>
+          {session.progress.total > 1 ? (
+            <span>
+              Stage: <strong>{session.currentStage}</strong> — processed <strong>{session.progress.current}</strong> of <strong>{session.progress.total}</strong> items
+            </span>
+          ) : (
+            <span>
+              Stage: <strong>{session.currentStage}</strong> in progress
+            </span>
+          )}
+          {overallPercent !== null && <span>{overallPercent}% overall</span>}
         </div>
       )}
 

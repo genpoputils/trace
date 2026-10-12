@@ -244,4 +244,60 @@ describe('Analysis Lifecycle, Stability & Performance Verification Suite', () =>
     assert.ok(result.analysisMetadata.stageDurations.centrality !== undefined, 'Centrality stage measured');
     assert.ok(result.analysisMetadata.stageDurations.dependencies !== undefined, 'Dependencies stage measured');
   });
+
+  test('CodebaseAnalyzer.analyzeProjectAsync cooperatively interrupts execution when cancelled', async () => {
+    const analyzer = new CodebaseAnalyzer();
+    const token = { isCancelled: false };
+    let progressCalls = 0;
+
+    await assert.rejects(async () => {
+      await analyzer.analyzeProjectAsync(
+        'Cancel-Test',
+        SAMPLE_ECOMMERCE_API,
+        () => {
+          progressCalls++;
+          if (progressCalls >= 1) {
+            token.isCancelled = true;
+          }
+        },
+        { cancellationToken: token }
+      );
+    }, /Analysis cancelled by user/);
+  });
+
+  test('Stage transitions: emits centrality, reports dependencies progress, and avoids premature completion', async () => {
+    const service = new BrowserAnalysisService();
+    const mockWorker = new ControllableMockWorker();
+    service.attachWorker(mockWorker);
+
+    const dummy = new Uint8Array([3, 3]).buffer;
+    service.importZipArchive(dummy, 'stages-test.zip');
+    const jobId = mockWorker.postedMessages[0].id;
+
+    // 1. Initial stage is extracting (running), others are pending
+    let state = service.getSessionState();
+    const parsingStage = state.stages.find((s) => s.id === 'parsing');
+    const centralityStage = state.stages.find((s) => s.id === 'centrality');
+    assert.strictEqual(parsingStage?.status, 'pending', 'Parsing is pending initially');
+    assert.strictEqual(centralityStage?.status, 'pending', 'Centrality is pending initially');
+
+    // 2. Transition to parsing
+    mockWorker.emitProgress(jobId, 'parsing', 10, 100, 'Parsing AST...');
+    state = service.getSessionState();
+    const extractingStage = state.stages.find((s) => s.id === 'extracting');
+    assert.strictEqual(extractingStage?.status, 'completed', 'Previous extracting stage completed');
+    assert.strictEqual(state.stages.find((s) => s.id === 'parsing')?.status, 'running', 'Parsing is now running');
+    assert.strictEqual(state.stages.find((s) => s.id === 'centrality')?.status, 'pending', 'Centrality remains pending');
+
+    // 3. Transition to centrality (matching stage identifier, not 'preparing')
+    mockWorker.emitProgress(jobId, 'centrality', 1, 1, 'Computing centrality...');
+    state = service.getSessionState();
+    assert.strictEqual(state.stages.find((s) => s.id === 'parsing')?.status, 'completed', 'Parsing is completed');
+    assert.strictEqual(state.stages.find((s) => s.id === 'centrality')?.status, 'running', 'Centrality is running');
+    assert.strictEqual(state.stages.find((s) => s.id === 'dependencies')?.status, 'pending', 'Dependencies remains pending');
+
+    // 4. Changing denominators (centrality total: 1 vs parsing total: 100) must not cause overall state to finish
+    assert.strictEqual(state.status, 'running', 'Session remains running during centrality');
+    assert.strictEqual(state.currentStage, 'centrality');
+  });
 });
