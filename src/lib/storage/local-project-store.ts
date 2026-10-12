@@ -19,6 +19,8 @@ export interface StoredProjectRecord {
   analysis: ProjectAnalysis;
 }
 
+export type RepositorySourceType = 'sample' | 'github' | 'upload';
+
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -27,6 +29,11 @@ export interface ProjectSummary {
   analyzedAt: string;
   revisionKey?: string;
   isSample?: boolean;
+  sourceType?: RepositorySourceType;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  commitSha?: string;
 }
 
 /**
@@ -306,33 +313,62 @@ export class LocalProjectStore {
     });
   }
 
+  private createProjectSummary(
+    analysis: ProjectAnalysis,
+    revisionKey?: string,
+    isSampleOverride?: boolean
+  ): ProjectSummary {
+    const isSample =
+      isSampleOverride ?? (analysis.projectId === 'sample-ecommerce-api' || Boolean(analysis.isSample));
+    const hasGit = Boolean(
+      analysis.gitMetadata?.owner &&
+      analysis.gitMetadata?.repo &&
+      analysis.gitMetadata?.commitSha &&
+      !isSample
+    );
+    const sourceType: RepositorySourceType = isSample
+      ? 'sample'
+      : (analysis.sourceType as RepositorySourceType) || (hasGit ? 'github' : 'upload');
+
+    return {
+      id: analysis.projectId,
+      name: analysis.projectName,
+      filesCount: analysis.stats?.totalFiles || 0,
+      symbolsCount: analysis.stats?.totalSymbols || 0,
+      analyzedAt: analysis.analyzedAt,
+      revisionKey:
+        revisionKey ||
+        (hasGit
+          ? `${analysis.gitMetadata!.owner!.toLowerCase()}/${analysis.gitMetadata!.repo!.toLowerCase()}@${analysis.gitMetadata!.commitSha}`
+          : undefined),
+      isSample,
+      sourceType,
+      owner: isSample ? 'genpoputils' : hasGit ? analysis.gitMetadata?.owner : undefined,
+      repo: isSample ? 'ecommerce-core' : hasGit ? analysis.gitMetadata?.repo : undefined,
+      branch: isSample ? 'main' : hasGit ? analysis.gitMetadata?.branch : undefined,
+      commitSha: isSample
+        ? 'c8f12a9e3d842bfb8291c94d01bfa5e998184d02'
+        : hasGit
+        ? analysis.gitMetadata?.commitSha
+        : undefined,
+    };
+  }
+
   public async listProjects(): Promise<ProjectSummary[]> {
     const summaries: Map<string, ProjectSummary> = new Map();
 
     // 1. Seed sample if in-memory is empty
     const sample = this.getSampleProject();
-    summaries.set(sample.projectId, {
-      id: sample.projectId,
-      name: sample.projectName,
-      filesCount: sample.stats.totalFiles,
-      symbolsCount: sample.stats.totalSymbols,
-      analyzedAt: sample.analyzedAt,
-      isSample: true,
-    });
+    summaries.set(sample.projectId, this.createProjectSummary(sample, undefined, true));
 
     // 2. Collect from in-memory cache (filter out incompatible entries)
     for (const rec of this.inMemoryCache.values()) {
       if (!this.isRecordCompatible(rec)) continue;
       const p = rec.analysis;
-      summaries.set(p.projectId, {
-        id: p.projectId,
-        name: p.projectName,
-        filesCount: p.stats.totalFiles,
-        symbolsCount: p.stats.totalSymbols,
-        analyzedAt: p.analyzedAt,
-        revisionKey: rec.revisionKey,
-        isSample: p.projectId === 'sample-ecommerce-api',
-      });
+      summaries.set(
+        p.projectId,
+        this.createProjectSummary(p, rec.revisionKey, p.projectId === 'sample-ecommerce-api')
+      );
     }
 
     // 3. Collect from IndexedDB
@@ -351,15 +387,14 @@ export class LocalProjectStore {
               if (record && record.analysis) {
                 if (this.isRecordCompatible(record)) {
                   if (!summaries.has(record.projectId)) {
-                    summaries.set(record.projectId, {
-                      id: record.projectId,
-                      name: record.projectName,
-                      filesCount: record.analysis.stats?.totalFiles || 0,
-                      symbolsCount: record.analysis.stats?.totalSymbols || 0,
-                      analyzedAt: record.analyzedAt,
-                      revisionKey: record.revisionKey,
-                      isSample: record.projectId === 'sample-ecommerce-api',
-                    });
+                    summaries.set(
+                      record.projectId,
+                      this.createProjectSummary(
+                        record.analysis,
+                        record.revisionKey,
+                        record.projectId === 'sample-ecommerce-api'
+                      )
+                    );
                   }
                 } else {
                   // Purge stale incompatible entry during listing
@@ -380,6 +415,11 @@ export class LocalProjectStore {
     }
 
     return Array.from(summaries.values());
+  }
+
+  public async countCustomProjects(): Promise<number> {
+    const projects = await this.listProjects();
+    return projects.filter((p) => !p.isSample && p.id !== 'sample-ecommerce-api').length;
   }
 
   private async deleteFromDb(projectId: string): Promise<boolean> {
@@ -412,15 +452,28 @@ export class LocalProjectStore {
     const db = await this.openDb();
     if (!db) return;
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       try {
-        const tx = db.transaction(STORE_PROJECTS, 'readwrite');
-        const store = tx.objectStore(STORE_PROJECTS);
-        store.clear();
+        const storeNames = [STORE_PROJECTS];
+        if (db.objectStoreNames.contains(STORE_METADATA)) {
+          storeNames.push(STORE_METADATA);
+        }
+        const tx = db.transaction(storeNames, 'readwrite');
+        tx.objectStore(STORE_PROJECTS).clear();
+        if (db.objectStoreNames.contains(STORE_METADATA)) {
+          tx.objectStore(STORE_METADATA).clear();
+        }
         tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      } catch {
-        resolve();
+        tx.onerror = () => {
+          console.error('Trace: Failed to clear IndexedDB stores:', tx.error);
+          reject(tx.error || new Error('IndexedDB clear transaction failed'));
+        };
+        tx.onabort = () => {
+          reject(new Error('IndexedDB clear transaction aborted'));
+        };
+      } catch (err) {
+        console.error('Trace: Error during clearAll:', err);
+        reject(err);
       }
     });
   }

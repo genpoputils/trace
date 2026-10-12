@@ -217,6 +217,8 @@ export interface ProjectAnalysis {
   partialReason?: string;
   skippedFiles?: { path: string; reason: string }[];
   analysisMetadata?: AnalysisPerformanceMetrics;
+  sourceType?: 'sample' | 'github' | 'upload';
+  isSample?: boolean;
 }
 
 export interface AnalysisPerformanceMetrics {

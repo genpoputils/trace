@@ -105,6 +105,19 @@ export class BrowserAnalysisService {
   private impactCache: Map<string, ImpactReport> = new Map();
   private dataflowCache: Map<string, DataFlowTrace> = new Map();
 
+  // In-memory session credentials (ephemeral only: NEVER written to storage/disk)
+  private sessionTokens: Map<string, string> = new Map();
+
+  public setSessionToken(owner: string, repo: string, token: string): void {
+    if (owner && repo && token) {
+      this.sessionTokens.set(`${owner.toLowerCase()}/${repo.toLowerCase()}`, token);
+    }
+  }
+
+  public getSessionToken(owner: string, repo: string): string | undefined {
+    return this.sessionTokens.get(`${owner.toLowerCase()}/${repo.toLowerCase()}`);
+  }
+
   constructor() {
     this.initWorker();
   }
@@ -663,6 +676,10 @@ export class BrowserAnalysisService {
     }
     this.activeAbortController = new AbortController();
 
+    if (token) {
+      this.setSessionToken(owner, repo, token);
+    }
+
     this.lastAnalysisParams = { type: 'github', owner, repo, branch, token };
 
     const initialStages: AnalysisStageProgress[] = [
@@ -937,6 +954,254 @@ export class BrowserAnalysisService {
       if (key.startsWith(projectId)) this.dataflowCache.delete(key);
     }
     return localProjectStore.deleteProject(projectId);
+  }
+
+  /**
+   * Re-sync the currently selected GitHub repository.
+   * Compares the remote latest commit SHA with the saved analysis commit.
+   * If unchanged, reports already up to date without re-downloading or re-analyzing.
+   * If newer commit exists, executes GitHub ingestion pipeline.
+   */
+  public async resyncGitHubProject(
+    projectId: string,
+    token?: string,
+    onProgress?: ProgressCallback
+  ): Promise<{
+    status: 'up-to-date' | 'updated';
+    analysis: ProjectAnalysis;
+    newCommitSha?: string;
+    previousCommitSha?: string;
+  }> {
+    if (this.sessionState.status === 'running') {
+      throw new Error('An analysis or sync operation is already in progress.');
+    }
+
+    const currentProject = await localProjectStore.getProject(projectId);
+    if (!currentProject) {
+      throw new Error(`Repository project '${projectId}' not found in local store.`);
+    }
+
+    if (
+      currentProject.projectId === 'sample-ecommerce-api' ||
+      !currentProject.gitMetadata?.owner ||
+      !currentProject.gitMetadata?.repo
+    ) {
+      throw new Error(
+        'Re-sync is only available for GitHub repositories. Sample projects and ZIP uploads cannot be re-synced.'
+      );
+    }
+
+    const { owner, repo } = currentProject.gitMetadata;
+    const branch = currentProject.gitMetadata.branch || 'main';
+    const currentSha = currentProject.gitMetadata.commitSha;
+    const effectiveToken = token || this.getSessionToken(owner, repo);
+
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.activeSessionId = sessionId;
+
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {}
+    }
+    this.activeAbortController = new AbortController();
+
+    const initialStages: AnalysisStageProgress[] = [
+      { id: 'checking_remote', name: 'Check remote revision', status: 'running' },
+      { id: 'connecting', name: 'GitHub connection', status: 'pending' },
+      { id: 'fetching', name: 'Git tree & files streaming', status: 'pending' },
+      { id: 'parsing', name: 'AST parsing', status: 'pending' },
+      { id: 'resolving', name: 'Cross-module relationships', status: 'pending' },
+      { id: 'centrality', name: 'Graph centrality', status: 'pending' },
+      { id: 'dependencies', name: 'Dependency intelligence', status: 'pending' },
+      { id: 'finalisation', name: 'Finalisation', status: 'pending' },
+    ];
+
+    const sessionStartTime = performance.now();
+    this.notify({
+      status: 'running',
+      sessionId,
+      projectName: `${owner}/${repo}`,
+      currentStage: 'checking_remote',
+      progress: {
+        current: 5,
+        total: 100,
+        message: `Checking remote GitHub repository for ${owner}/${repo}@${branch}...`,
+      },
+      stages: initialStages,
+      isPartial: false,
+      error: null,
+      startTime: sessionStartTime,
+      canCancel: true,
+      canRetry: false,
+    });
+
+    try {
+      let remoteCommit: { sha: string; message?: string };
+      try {
+        remoteCommit = await browserGitHubClient.getLatestCommit(
+          owner,
+          repo,
+          branch,
+          effectiveToken
+        );
+      } catch (checkErr) {
+        const errorMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+        let recoveryAction = 'Check the repository URL and branch, or export and upload a ZIP archive.';
+        if (
+          errorMsg.includes('401') ||
+          errorMsg.includes('unauthorized') ||
+          errorMsg.includes('Bad credentials')
+        ) {
+          recoveryAction =
+            'This private repository requires authentication. Please reconnect with a valid GitHub Personal Access Token.';
+        } else if (errorMsg.includes('rate limit')) {
+          recoveryAction =
+            'GitHub API rate limit exceeded. Provide a Personal Access Token to increase the limit, or use ZIP upload.';
+        } else if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+          recoveryAction =
+            'Repository or branch not found on GitHub. Verify the repository name and branch permissions.';
+        }
+
+        const formattedError: AnalysisErrorDetails = {
+          title: 'GitHub re-sync failed',
+          message: errorMsg,
+          stage: 'checking_remote',
+          recoveryAction,
+          canRetry: true,
+          technicalDetails: checkErr instanceof Error ? checkErr.stack : undefined,
+        };
+
+        const failedStages = initialStages.map((s) =>
+          s.id === 'checking_remote' ? { ...s, status: 'failed' as const } : s
+        );
+
+        this.notify({
+          status: 'failed',
+          error: formattedError,
+          canCancel: false,
+          canRetry: true,
+          stages: failedStages,
+          progress: {
+            current: 0,
+            total: 100,
+            message: errorMsg,
+          },
+        });
+
+        throw checkErr;
+      }
+
+      if (this.activeSessionId !== sessionId) {
+        throw new Error('Analysis cancelled by user.');
+      }
+
+      // Check if remote commit is already identical to saved analysis
+      if (remoteCommit.sha && currentSha && remoteCommit.sha === currentSha) {
+        const shortSha = currentSha.slice(0, 7);
+        const completedStages = initialStages.map((s) => ({
+          ...s,
+          status: 'completed' as const,
+        }));
+
+        this.notify({
+          status: 'completed',
+          currentStage: 'completed',
+          projectId: currentProject.projectId,
+          canCancel: false,
+          canRetry: false,
+          stages: completedStages,
+          progress: {
+            current: currentProject.stats?.totalFiles || 0,
+            total: currentProject.stats?.totalFiles || 0,
+            message: `Repository is already up to date at commit ${shortSha}.`,
+          },
+        });
+
+        return {
+          status: 'up-to-date',
+          analysis: currentProject,
+          newCommitSha: remoteCommit.sha,
+          previousCommitSha: currentSha,
+        };
+      }
+
+      // Newer commit detected — run full ingestion pipeline
+      const newShortSha = remoteCommit.sha.slice(0, 7);
+      this.notify({
+        progress: {
+          current: 10,
+          total: 100,
+          message: `New commit ${newShortSha} detected. Syncing and analyzing repository...`,
+        },
+      });
+
+      const importResult = await this.importGitHubRepo(
+        owner,
+        repo,
+        branch,
+        effectiveToken,
+        onProgress
+      );
+
+      return {
+        status: 'updated',
+        analysis: importResult.analysis,
+        newCommitSha: remoteCommit.sha,
+        previousCommitSha: currentSha,
+      };
+    } catch (err) {
+      if (this.activeSessionId === sessionId) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        if (errorMsg.includes('cancelled')) {
+          this.cancelActiveAnalysis(errorMsg);
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Clears Trace-owned in-memory and persisted repository data.
+   * Cancels active analysis, clears result caches, clears IndexedDB stores,
+   * and preserves the bundled sample project mechanism.
+   */
+  public async clearLocalData(): Promise<{ success: boolean; projectsCleared: number }> {
+    // 1. Cancel any active analysis safely
+    if (this.sessionState.status === 'running') {
+      this.cancelActiveAnalysis('Active analysis cancelled due to local data reset.');
+    }
+
+    // 2. Count projects to be cleared
+    const customCount = await localProjectStore.countCustomProjects();
+
+    // 3. Clear fast in-memory caches
+    this.traceCache.clear();
+    this.impactCache.clear();
+    this.dataflowCache.clear();
+    this.lastAnalysisParams = null;
+    this.sessionTokens.clear();
+
+    // 4. Clear IndexedDB storage
+    await localProjectStore.clearAll();
+
+    // 5. Reset session state
+    this.notify({
+      status: 'idle',
+      sessionId: null,
+      projectName: '',
+      currentStage: '',
+      progress: { current: 0, total: 0, message: 'Local data cleared. Ready to analyse a codebase.' },
+      stages: [],
+      isPartial: false,
+      error: null,
+      startTime: 0,
+      elapsedMs: 0,
+      canCancel: false,
+      canRetry: false,
+    });
+
+    return { success: true, projectsCleared: customCount };
   }
 
   /**

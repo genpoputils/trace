@@ -19,6 +19,7 @@ import { LowerSourcePanel } from '@/components/source/LowerSourcePanel';
 import { UploadModal } from '@/components/modals/UploadModal';
 import { GitHubModal } from '@/components/modals/GitHubModal';
 import { SearchModal } from '@/components/modals/SearchModal';
+import { ClearLocalDataModal } from '@/components/modals/ClearLocalDataModal';
 import { AnalysisStatusSurface } from '@/components/analysis/AnalysisStatusSurface';
 import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
 
@@ -46,6 +47,8 @@ export default function TraceHomePage() {
   const [uploadModalOpen, setUploadModalOpen] = useState<boolean>(false);
   const [githubModalOpen, setGithubModalOpen] = useState<boolean>(false);
   const [searchModalOpen, setSearchModalOpen] = useState<boolean>(false);
+  const [clearLocalDataModalOpen, setClearLocalDataModalOpen] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   // Graph Filters
   const [focusNeighborhood, setFocusNeighborhood] = useState<boolean>(false);
@@ -274,6 +277,40 @@ export default function TraceHomePage() {
     [currentProjectId, loadProject]
   );
 
+  const handleResyncCurrentProject = useCallback(async () => {
+    if (!currentProjectId) return;
+    setIsSyncing(true);
+    try {
+      const result = await browserAnalysisService.resyncGitHubProject(currentProjectId);
+      if (result.status === 'updated') {
+        setAnalysis(result.analysis);
+        refreshProjectsList();
+        loadProject(result.analysis.projectId);
+      }
+    } catch (err) {
+      console.error('Failed to re-sync project:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('authentication') || msg.includes('401') || msg.includes('token') || msg.includes('credentials')) {
+        setGithubModalOpen(true);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [currentProjectId, loadProject, refreshProjectsList]);
+
+  const handleConfirmClearLocalData = useCallback(async () => {
+    try {
+      await browserAnalysisService.clearLocalData();
+      setSelectedEntityId(null);
+      setInspectorOpen(false);
+      refreshProjectsList();
+      await loadProject('sample-ecommerce-api');
+    } catch (err) {
+      console.error('Failed to clear local data:', err);
+      throw err;
+    }
+  }, [loadProject, refreshProjectsList]);
+
   // Notify graph canvases when sidebars or panels toggle geometry
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -290,7 +327,10 @@ export default function TraceHomePage() {
         currentProjectId={currentProjectId}
         projectsList={projectsList}
         theme={theme}
+        isSyncing={isSyncing}
         onSelectProject={loadProject}
+        onResyncCurrentProject={handleResyncCurrentProject}
+        onOpenClearLocalDataModal={() => setClearLocalDataModalOpen(true)}
         onOpenSearch={() => setSearchModalOpen(true)}
         onOpenGitHubModal={() => setGithubModalOpen(true)}
         onOpenUploadModal={() => setUploadModalOpen(true)}
@@ -586,6 +626,15 @@ export default function TraceHomePage() {
         onSelectEntity={handleEntitySelect}
         onOpenGitHubModal={() => setGithubModalOpen(true)}
         onOpenUploadModal={() => setUploadModalOpen(true)}
+      />
+
+      <ClearLocalDataModal
+        isOpen={clearLocalDataModalOpen}
+        onClose={() => setClearLocalDataModalOpen(false)}
+        onConfirmClear={handleConfirmClearLocalData}
+        savedProjectsCount={
+          projectsList.filter((p) => !p.isSample && p.id !== 'sample-ecommerce-api').length
+        }
       />
     </div>
   );
