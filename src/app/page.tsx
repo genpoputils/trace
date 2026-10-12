@@ -35,8 +35,8 @@ export default function TraceHomePage() {
   const [currentProjectId, setCurrentProjectId] = useState<string>('sample-ecommerce-api');
   const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<WorkspaceTabId>('graph');
-  const [visitedTabs, setVisitedTabs] = useState<Set<WorkspaceTabId>>(() => new Set(['graph']));
+  const [activeTab, setActiveTab] = useState<WorkspaceTabId>('overview');
+  const [visitedTabs, setVisitedTabs] = useState<Set<WorkspaceTabId>>(() => new Set(['overview']));
   const [fileExplorerOpen, setFileExplorerOpen] = useState<boolean>(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
