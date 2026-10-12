@@ -642,6 +642,40 @@ export class TypeScriptAdapter {
         const callLoc = getLocation(node);
         const callSnippet = getSnippet(node, 3);
 
+        // Link route handlers passed as arguments to router methods
+        if (caller.kind === 'route') {
+          for (const arg of node.arguments.slice(1)) {
+            if (ts.isIdentifier(arg)) {
+              const handlerName = arg.text;
+              const imp = importsByLocalName.get(handlerName);
+              if (imp) {
+                relationships.push({
+                  id: `${caller.id}->routes_to->import:${imp.sourceModule}:${imp.importedName}#${callLoc.startLine}`,
+                  sourceId: caller.id,
+                  targetId: `__import__:${imp.sourceModule}:${imp.importedName || handlerName}`,
+                  kind: 'routes_to',
+                  confidence: 'statically_resolved',
+                  location: callLoc,
+                  notes: `Route ${caller.name} executes handler ${handlerName} from ${imp.sourceModule}`,
+                });
+              } else {
+                const local = localSymbols.get(handlerName);
+                if (local) {
+                  relationships.push({
+                    id: `${caller.id}->routes_to->${local.entityId}#${callLoc.startLine}`,
+                    sourceId: caller.id,
+                    targetId: local.entityId,
+                    kind: 'routes_to',
+                    confidence: 'statically_resolved',
+                    location: callLoc,
+                    notes: `Route ${caller.name} executes local handler ${handlerName}`,
+                  });
+                }
+              }
+            }
+          }
+        }
+
         // Case A: Direct call to an identifier e.g. hashPassword(pass), validate(data)
         if (ts.isIdentifier(expr)) {
           const calleeName = expr.text;

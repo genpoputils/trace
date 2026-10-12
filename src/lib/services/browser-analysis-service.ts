@@ -975,9 +975,17 @@ export class BrowserAnalysisService {
     if (this.sessionState.status === 'running') {
       throw new Error('An analysis or sync operation is already in progress.');
     }
+    this.sessionState.status = 'running';
 
-    const currentProject = await localProjectStore.getProject(projectId);
+    let currentProject;
+    try {
+      currentProject = await localProjectStore.getProject(projectId);
+    } catch (e) {
+      this.sessionState.status = 'idle';
+      throw e;
+    }
     if (!currentProject) {
+      this.sessionState.status = 'idle';
       throw new Error(`Repository project '${projectId}' not found in local store.`);
     }
 
@@ -986,6 +994,7 @@ export class BrowserAnalysisService {
       !currentProject.gitMetadata?.owner ||
       !currentProject.gitMetadata?.repo
     ) {
+      this.sessionState.status = 'idle';
       throw new Error(
         'Re-sync is only available for GitHub repositories. Sample projects and ZIP uploads cannot be re-synced.'
       );

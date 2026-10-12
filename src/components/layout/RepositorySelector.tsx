@@ -11,7 +11,6 @@ import {
   UploadCloud,
   Sparkles,
   Trash2,
-  ExternalLink,
 } from 'lucide-react';
 import { ProjectSummary, RepositorySourceType } from '@/lib/storage/local-project-store';
 import { GitHubIcon } from './AppHeader';
@@ -132,13 +131,18 @@ export const RepositorySelector: React.FC<RepositorySelectorProps> = ({
 
   // Open / Close management and focus restoration
   const handleToggleOpen = () => {
-    setIsOpen((prev) => !prev);
+    setIsOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setSearchQuery('');
+        setHighlightedId(currentProjectId);
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
     if (isOpen) {
-      setSearchQuery('');
-      setHighlightedId(currentProjectId);
       const timer = setTimeout(() => {
         searchInputRef.current?.focus();
       }, 40);
@@ -146,7 +150,7 @@ export const RepositorySelector: React.FC<RepositorySelectorProps> = ({
     } else {
       triggerButtonRef.current?.focus();
     }
-  }, [isOpen, currentProjectId]);
+  }, [isOpen]);
 
   // Click outside listener
   useEffect(() => {

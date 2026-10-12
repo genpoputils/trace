@@ -1,8 +1,7 @@
 import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { localProjectStore, LocalProjectStore, ProjectSummary } from '../src/lib/storage/local-project-store';
+import { localProjectStore, LocalProjectStore } from '../src/lib/storage/local-project-store';
 import { BrowserAnalysisService } from '../src/lib/services/browser-analysis-service';
-import { BrowserGitHubClient } from '../src/lib/github/browser-github-client';
 import { ProjectAnalysis } from '../src/lib/types/trace';
 import { formatRelativeTime } from '../src/components/layout/RepositorySelector';
 
@@ -443,14 +442,18 @@ describe('Repository Manager, Local Data Reset & GitHub Re-sync Suite', () => {
       });
 
       // Simulate a running analysis state
-      (service as any).activeSessionId = 'stale_session_123';
-      (service as any).sessionState.status = 'running';
+      const internalService = service as unknown as {
+        activeSessionId: string | null;
+        sessionState: { status: string };
+      };
+      internalService.activeSessionId = 'stale_session_123';
+      internalService.sessionState.status = 'running';
 
       // Clear local data
       await service.clearLocalData();
 
       // Verify active session was cancelled
-      assert.strictEqual((service as any).activeSessionId, null);
+      assert.strictEqual(internalService.activeSessionId, null);
       assert.strictEqual(service.getSessionState().status, 'idle');
 
       // Verify previous project does not exist

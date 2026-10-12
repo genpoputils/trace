@@ -319,6 +319,15 @@ function RelationshipGraphContent({
         }
       }
 
+      // Ensure explicitly selected entity and immediate neighbors are visible
+      if (selectedEntityId && analysis.entities[selectedEntityId]) {
+        topHubIds.add(selectedEntityId);
+        for (const rel of analysis.relationships) {
+          if (rel.sourceId === selectedEntityId) topHubIds.add(rel.targetId);
+          if (rel.targetId === selectedEntityId) topHubIds.add(rel.sourceId);
+        }
+      }
+
       // Add user-expanded callers (incoming)
       for (const cId of expandedCallerIds) {
         topHubIds.add(cId);
@@ -421,6 +430,7 @@ function RelationshipGraphContent({
     neighborCounts,
     callerCounts,
     calleeCounts,
+    selectedEntityId,
     toggleExpandNode,
     toggleExpandCallers,
     toggleExpandCallees,
