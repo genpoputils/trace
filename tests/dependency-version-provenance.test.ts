@@ -92,7 +92,8 @@ describe('GT-012: Dependency Version Provenance Engine', () => {
 
       // Wildcard
       assert.strictEqual(satisfiesVersionRange('99.0.0', '*').satisfies, true);
-      assert.strictEqual(satisfiesVersionRange('1.0.0', 'latest').satisfies, true);
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'latest').satisfies, false);
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'latest').status, 'unknown');
     });
   });
 
@@ -662,9 +663,15 @@ github.com/gin-gonic/gin v1.9.1/go.mod h1:1q8j0x5+/2=
       assert.strictEqual(gitSpec.status, 'unknown');
 
       const tagSpec = satisfiesVersionRange('1.0.0', 'latest');
-      assert.strictEqual(tagSpec.status, 'satisfied'); // latest is valid wildcard alias
+      assert.strictEqual(tagSpec.status, 'unknown'); // registry tag cannot be verified without independent mapping
+      assert.strictEqual(tagSpec.satisfies, false);
       assert.strictEqual(satisfiesVersionRange('1.0.0', 'next').status, 'unknown');
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'next').satisfies, false);
       assert.strictEqual(satisfiesVersionRange('1.0.0', 'beta').status, 'unknown');
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'beta').satisfies, false);
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'alpha').status, 'unknown');
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'canary').status, 'unknown');
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'dev').status, 'unknown');
     });
 
     test('Malformed, unsupported, or ambiguous specifications never default to satisfied', () => {

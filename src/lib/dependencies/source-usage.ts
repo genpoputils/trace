@@ -165,21 +165,62 @@ export function mapPackagesToSourceUsage(
   }
 
   const unsupportedExtMap: Record<string, { ecosystem: EcosystemType; name: string }> = {
-    '.java': { ecosystem: 'unknown', name: 'Java' },
-    '.kt': { ecosystem: 'unknown', name: 'Kotlin' },
-    '.scala': { ecosystem: 'unknown', name: 'Scala' },
-    '.cs': { ecosystem: 'unknown', name: 'C# / .NET' },
-    '.fs': { ecosystem: 'unknown', name: 'F#' },
-    '.c': { ecosystem: 'unknown', name: 'C' },
-    '.cpp': { ecosystem: 'unknown', name: 'C++' },
-    '.cc': { ecosystem: 'unknown', name: 'C++' },
-    '.h': { ecosystem: 'unknown', name: 'C/C++ Header' },
-    '.hpp': { ecosystem: 'unknown', name: 'C++ Header' },
-    '.swift': { ecosystem: 'unknown', name: 'Swift' },
-    '.rb': { ecosystem: 'unknown', name: 'Ruby' },
-    '.php': { ecosystem: 'unknown', name: 'PHP' },
-    '.dart': { ecosystem: 'unknown', name: 'Dart' },
+    // Web templates and component files containing JS/TS imports
+    '.vue': { ecosystem: 'javascript', name: 'Vue' },
+    '.svelte': { ecosystem: 'javascript', name: 'Svelte' },
+    '.astro': { ecosystem: 'javascript', name: 'Astro' },
+    // JVM languages
+    '.java': { ecosystem: 'jvm', name: 'Java' },
+    '.kt': { ecosystem: 'jvm', name: 'Kotlin' },
+    '.kts': { ecosystem: 'jvm', name: 'Kotlin Script' },
+    '.scala': { ecosystem: 'jvm', name: 'Scala' },
+    '.groovy': { ecosystem: 'jvm', name: 'Groovy' },
+    // .NET languages
+    '.cs': { ecosystem: 'dotnet', name: 'C#' },
+    '.fs': { ecosystem: 'dotnet', name: 'F#' },
+    '.vb': { ecosystem: 'dotnet', name: 'Visual Basic' },
+    // C / C++
+    '.c': { ecosystem: 'cpp', name: 'C' },
+    '.cpp': { ecosystem: 'cpp', name: 'C++' },
+    '.cc': { ecosystem: 'cpp', name: 'C++' },
+    '.cxx': { ecosystem: 'cpp', name: 'C++' },
+    '.h': { ecosystem: 'cpp', name: 'C/C++ Header' },
+    '.hpp': { ecosystem: 'cpp', name: 'C++ Header' },
+    '.hxx': { ecosystem: 'cpp', name: 'C++ Header' },
+    '.inl': { ecosystem: 'cpp', name: 'C++ Inline' },
+    // Swift
+    '.swift': { ecosystem: 'swift', name: 'Swift' },
+    // Ruby
+    '.rb': { ecosystem: 'ruby', name: 'Ruby' },
+    '.rake': { ecosystem: 'ruby', name: 'Rake' },
+    // PHP
+    '.php': { ecosystem: 'php', name: 'PHP' },
+    // Dart
+    '.dart': { ecosystem: 'dart', name: 'Dart' },
+    // Elixir
+    '.ex': { ecosystem: 'elixir', name: 'Elixir' },
+    '.exs': { ecosystem: 'elixir', name: 'Elixir Script' },
+    // Other common languages
+    '.sh': { ecosystem: 'unknown', name: 'Shell' },
+    '.bash': { ecosystem: 'unknown', name: 'Bash' },
+    '.lua': { ecosystem: 'unknown', name: 'Lua' },
+    '.r': { ecosystem: 'unknown', name: 'R' },
+    '.jl': { ecosystem: 'unknown', name: 'Julia' },
+    '.hs': { ecosystem: 'unknown', name: 'Haskell' },
+    '.clj': { ecosystem: 'unknown', name: 'Clojure' },
+    '.pl': { ecosystem: 'unknown', name: 'Perl' },
+    '.zig': { ecosystem: 'unknown', name: 'Zig' },
+    '.nim': { ecosystem: 'unknown', name: 'Nim' },
   };
+
+  const nonSourceExts = new Set([
+    '.json', '.yaml', '.yml', '.toml', '.xml', '.lock', '.md', '.markdown', '.txt', '.pdf',
+    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.bmp', '.tiff',
+    '.css', '.scss', '.sass', '.less', '.html', '.htm',
+    '.map', '.wasm', '.zip', '.tar', '.gz', '.tgz', '.rar', '.7z',
+    '.env', '.gitignore', '.gitattributes', '.editorconfig', '.eslintignore', '.prettierignore',
+    '.bin', '.exe', '.dll', '.so', '.dylib', '.ttf', '.woff', '.woff2', '.eot',
+  ]);
 
   const seenUsageIds = new Set<string>();
 
@@ -234,39 +275,24 @@ export function mapPackagesToSourceUsage(
     const dotIdx = lowerPath.lastIndexOf('.');
     const ext = dotIdx !== -1 ? lowerPath.substring(dotIdx) : '';
 
-    // Check unsupported languages
-    if (ext && unsupportedExtMap[ext]) {
-      coverage.totalSourceFilesDetected++;
-      if (!coverage.unsupportedExtensions.includes(ext)) {
-        coverage.unsupportedExtensions.push(ext);
-      }
-      const langName = unsupportedExtMap[ext].name;
-      if (!coverage.languages[langName]) {
-        coverage.languages[langName] = {
-          ecosystem: unsupportedExtMap[ext].ecosystem,
-          language: langName,
-          detectedFilesCount: 0,
-          scannedFilesCount: 0,
-          isSupported: false,
-          isComplete: false,
-          unsupportedReasons: [`Static import parser for ${langName} (${ext}) is not implemented.`],
-        };
-      }
-      coverage.languages[langName].detectedFilesCount++;
-      continue;
-    }
-
     const lines = file.content.split('\n');
 
-    // 1. JavaScript / TypeScript Files
-    if (
+    const isJsTs =
       lowerPath.endsWith('.ts') ||
       lowerPath.endsWith('.tsx') ||
       lowerPath.endsWith('.js') ||
       lowerPath.endsWith('.jsx') ||
       lowerPath.endsWith('.mjs') ||
-      lowerPath.endsWith('.cjs')
-    ) {
+      lowerPath.endsWith('.cjs') ||
+      lowerPath.endsWith('.mts') ||
+      lowerPath.endsWith('.cts');
+
+    const isPy = lowerPath.endsWith('.py') || lowerPath.endsWith('.pyi');
+    const isRs = lowerPath.endsWith('.rs');
+    const isGo = lowerPath.endsWith('.go');
+
+    // 1. JavaScript / TypeScript Files (including .mts and .cts)
+    if (isJsTs) {
       coverage.totalSourceFilesDetected++;
       coverage.totalSourceFilesScanned++;
       coverage.languages.javascript.detectedFilesCount++;
@@ -281,8 +307,8 @@ export function mapPackagesToSourceUsage(
       );
     }
 
-    // 2. Python Files
-    else if (lowerPath.endsWith('.py')) {
+    // 2. Python Files (including .pyi)
+    else if (isPy) {
       coverage.totalSourceFilesDetected++;
       coverage.totalSourceFilesScanned++;
       coverage.languages.python.detectedFilesCount++;
@@ -298,7 +324,7 @@ export function mapPackagesToSourceUsage(
     }
 
     // 3. Rust Files
-    else if (lowerPath.endsWith('.rs')) {
+    else if (isRs) {
       coverage.totalSourceFilesDetected++;
       coverage.totalSourceFilesScanned++;
       coverage.languages.rust.detectedFilesCount++;
@@ -314,7 +340,7 @@ export function mapPackagesToSourceUsage(
     }
 
     // 4. Go Files
-    else if (lowerPath.endsWith('.go')) {
+    else if (isGo) {
       coverage.totalSourceFilesDetected++;
       coverage.totalSourceFilesScanned++;
       coverage.languages.go.detectedFilesCount++;
@@ -328,7 +354,68 @@ export function mapPackagesToSourceUsage(
         addUsage
       );
     }
+
+    // 5. Unsupported Known Languages
+    else if (ext && unsupportedExtMap[ext]) {
+      coverage.totalSourceFilesDetected++;
+      if (!coverage.unsupportedExtensions.includes(ext)) {
+        coverage.unsupportedExtensions.push(ext);
+      }
+      const mapping = unsupportedExtMap[ext];
+      const langName = mapping.name;
+      const eco = mapping.ecosystem;
+
+      // Track by ecosystem key if known
+      if (eco !== 'unknown') {
+        if (!coverage.languages[eco]) {
+          coverage.languages[eco] = {
+            ecosystem: eco,
+            language: langName,
+            detectedFilesCount: 0,
+            scannedFilesCount: 0,
+            isSupported: eco === 'javascript' || eco === 'python' || eco === 'rust' || eco === 'go',
+            isComplete: false,
+            unsupportedReasons: [`Static parser does not scan ${ext} (${langName}) files.`],
+          };
+        } else if (eco === 'javascript' || eco === 'python' || eco === 'rust' || eco === 'go') {
+          // If a supported ecosystem contains unsupported source files (e.g. .vue in JS)
+          // mark that ecosystem's scan as incomplete so negative claims cannot be falsely made.
+          coverage.languages[eco].isComplete = false;
+          if (!coverage.languages[eco].unsupportedReasons) {
+            coverage.languages[eco].unsupportedReasons = [];
+          }
+          coverage.languages[eco].unsupportedReasons!.push(
+            `Detected unsupported source file with extension ${ext} (${langName}).`
+          );
+        }
+        coverage.languages[eco].detectedFilesCount++;
+      }
+
+      // Also ensure by-name indexing for compatibility
+      if (!coverage.languages[langName]) {
+        coverage.languages[langName] = {
+          ecosystem: eco,
+          language: langName,
+          detectedFilesCount: 0,
+          scannedFilesCount: 0,
+          isSupported: false,
+          isComplete: false,
+          unsupportedReasons: [`Static import parser for ${langName} (${ext}) is not implemented.`],
+        };
+      }
+      coverage.languages[langName].detectedFilesCount++;
+    }
+
+    // 6. Unrecognized Potential Source Extension
+    else if (ext && !nonSourceExts.has(ext)) {
+      coverage.totalSourceFilesDetected++;
+      if (!coverage.unsupportedExtensions.includes(ext)) {
+        coverage.unsupportedExtensions.push(ext);
+      }
+    }
   }
+
+  coverage.unsupportedFileTypes = coverage.unsupportedExtensions;
 
   // Identify direct packages with zero source usages (unreferenced) ONLY when coverage allows negative claim
   const unreferencedPackageIds = new Set<string>();

@@ -51,6 +51,10 @@ export function buildPackageDependencyGraph(
 
   // Map package name (lowercase) to nodes for parent resolution
   const nodesByName = new Map<string, PackageDependencyNode[]>();
+  // Map dep.id to stableId for explicit parent ID resolution
+  const nodesByDepId = new Map<string, string>();
+  // Map ecosystem:name to nodes to strictly prevent cross-ecosystem candidate matching
+  const nodesByEcosystemAndName = new Map<string, PackageDependencyNode[]>();
 
   // 1. Create nodes for all dependencies
   for (const dep of dependencies) {
@@ -89,6 +93,13 @@ export function buildPackageDependencyGraph(
     const list = nodesByName.get(nameKey) || [];
     list.push(node);
     nodesByName.set(nameKey, list);
+
+    nodesByDepId.set(dep.id, stableId);
+
+    const ecoNameKey = `${dep.ecosystem}:${nameKey}`;
+    const ecoList = nodesByEcosystemAndName.get(ecoNameKey) || [];
+    ecoList.push(node);
+    nodesByEcosystemAndName.set(ecoNameKey, ecoList);
 
     if (dep.isDirect) {
       rootNodeIds.push(stableId);
@@ -203,21 +214,81 @@ export function buildPackageDependencyGraph(
 
   // 4. Connect transitive dependencies using VALIDATED parent-child evidence
   // Never attach all transitive dependencies to the first direct dependency as a guessed parent.
+  // Never fall back to arbitrary candidates[0] across manifests or ecosystems.
   // If an adapter identifies a package and its resolved version, but not its parent dependency,
-  // represent the relationship as unknown/incomplete without manufacturing a specific edge.
+  // or if parent identity is ambiguous, represent the relationship as unknown/incomplete without manufacturing a guessed edge.
   for (const [, transNodes] of transitivesByManifest.entries()) {
     for (const transNode of transNodes) {
       if (transNode.parentPackages && transNode.parentPackages.length > 0) {
-        for (const parentName of transNode.parentPackages) {
-          const candidates = (nodesByName.get(parentName.toLowerCase()) || []).filter(
-            (p) => !p.id.startsWith('manifest:') && p.id !== transNode.id
-          );
+        for (const parentRef of transNode.parentPackages) {
+          let matchedParent: PackageDependencyNode | undefined;
 
-          if (candidates.length > 0) {
-            // Prefer parent in the same manifest or workspace
-            const matchedParent =
-              candidates.find((p) => p.manifestPath === transNode.manifestPath) || candidates[0];
+          // 1. Direct ID match: Check if parentRef is a known stable ID or dep.id
+          if (
+            nodes[parentRef] &&
+            !nodes[parentRef].id.startsWith('manifest:') &&
+            nodes[parentRef].id !== transNode.id &&
+            nodes[parentRef].ecosystem === transNode.ecosystem
+          ) {
+            matchedParent = nodes[parentRef];
+          } else if (nodesByDepId.has(parentRef)) {
+            const stableId = nodesByDepId.get(parentRef)!;
+            const cand = nodes[stableId];
+            if (
+              cand &&
+              !cand.id.startsWith('manifest:') &&
+              cand.id !== transNode.id &&
+              cand.ecosystem === transNode.ecosystem
+            ) {
+              matchedParent = cand;
+            }
+          }
 
+          // 2. Name-based match within the SAME ecosystem only
+          if (!matchedParent) {
+            const ecoNameKey = `${transNode.ecosystem}:${parentRef.toLowerCase()}`;
+            const candidates = (nodesByEcosystemAndName.get(ecoNameKey) || []).filter(
+              (p) => !p.id.startsWith('manifest:') && p.id !== transNode.id
+            );
+
+            if (candidates.length > 0) {
+              // Narrow down candidates by exact context: same manifest first, then same workspace/lockfile
+              const sameManifestCandidates = candidates.filter((p) => p.manifestPath === transNode.manifestPath);
+              const sameWorkspaceCandidates = candidates.filter(
+                (p) => p.workspacePath && transNode.workspacePath && p.workspacePath === transNode.workspacePath
+              );
+              const sameLockCandidates = candidates.filter(
+                (p) => p.lockfilePath && transNode.lockfilePath && p.lockfilePath === transNode.lockfilePath
+              );
+
+              const contextualCandidates =
+                sameManifestCandidates.length > 0
+                  ? sameManifestCandidates
+                  : sameWorkspaceCandidates.length > 0
+                  ? sameWorkspaceCandidates
+                  : sameLockCandidates.length > 0
+                  ? sameLockCandidates
+                  : [];
+
+              if (contextualCandidates.length === 1) {
+                // Exactly one plausible candidate in the same context
+                matchedParent = contextualCandidates[0];
+              } else if (contextualCandidates.length > 1) {
+                // Multiple candidates exist in the same context (e.g. multi-version parent packages).
+                // Check if child dependency evidence (p.dependencies) disambiguates:
+                const verified = contextualCandidates.filter(
+                  (p) => p.dependencies && p.dependencies.some((d) => d.toLowerCase() === transNode.name.toLowerCase())
+                );
+                if (verified.length === 1) {
+                  matchedParent = verified[0];
+                }
+                // If still ambiguous (0 or >1 verified), do NOT guess! Leave unresolved.
+              }
+            }
+          }
+
+          // Emit edge only if matched parent exists and both nodes exist in the graph
+          if (matchedParent && nodes[matchedParent.id] && nodes[transNode.id]) {
             const edgeId = `${matchedParent.id}->${transNode.id}:transitive`;
             if (!edgeIdSet.has(edgeId)) {
               edgeIdSet.add(edgeId);
@@ -235,7 +306,6 @@ export function buildPackageDependencyGraph(
               transNode.dependentsCount++;
             }
           }
-          // If candidate parent node does not exist, do NOT manufacture an edge referencing non-existent nodes
         }
       }
       // If parentPackages is empty or unknown, do not manufacture a guessed edge to directNodes[0] or manifest!

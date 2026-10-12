@@ -22,6 +22,8 @@ import {
   evaluateDependencyHealth,
   reconcileWorkspaceProvenance,
   canMakeNegativeUsageClaim,
+  satisfiesVersionRange,
+  buildDependencyProvenance,
   NormalizedDependency,
   SourceScanCoverage,
 } from '../src/lib/dependencies';
@@ -1548,3 +1550,761 @@ describe('Issue #12: Duplicate and Conflict Health Signals Consistency Regressio
     assert.strictEqual(matchesUnreferencedTab, false);
   });
 });
+
+describe('PR #68 Final Fix: Issue 1 — Transitive Dependency Graph Accuracy', () => {
+  test('Known parent/child edges are constructed correctly', () => {
+    const directDep: NormalizedDependency = {
+      id: 'dep-direct',
+      name: 'express',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.18.2',
+      versionResolved: '4.18.2',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      dependencies: ['body-parser'],
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+    const transDep: NormalizedDependency = {
+      id: 'dep-trans',
+      name: 'body-parser',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.20.1',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['express'],
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({ dependencies: [directDep, transDep] });
+    const directId = getStablePackageId(directDep);
+    const transId = getStablePackageId(transDep);
+
+    const edge = graph.edges.find((e) => e.source === directId && e.target === transId);
+    assert.ok(edge, 'Known parent/child edge must be created');
+    assert.strictEqual(edge.type, 'transitive');
+    assert.strictEqual(edge.isTransitive, true);
+  });
+
+  test('A transitive package is not attached to an unrelated direct dependency', () => {
+    const directA: NormalizedDependency = {
+      id: 'dep-a',
+      name: 'alpha',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const directB: NormalizedDependency = {
+      id: 'dep-b',
+      name: 'beta',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '2.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const transChild: NormalizedDependency = {
+      id: 'dep-c',
+      name: 'gamma',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '3.0.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['alpha'],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({ dependencies: [directA, directB, transChild] });
+    const bId = getStablePackageId(directB);
+    const cId = getStablePackageId(transChild);
+
+    const wrongEdge = graph.edges.find((e) => e.source === bId && e.target === cId);
+    assert.strictEqual(wrongEdge, undefined, 'Transitive package must not be attached to unrelated direct dependency');
+  });
+
+  test('Identical package names in different ecosystems cannot create cross-ecosystem edges', () => {
+    const pythonParent: NormalizedDependency = {
+      id: 'py-requests',
+      name: 'requests',
+      ecosystem: 'python',
+      packageManager: 'pip',
+      versionResolved: '2.28.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'requirements.txt',
+      evidence: [],
+    };
+    const jsDirect: NormalizedDependency = {
+      id: 'js-app',
+      name: 'my-app',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const jsTransitive: NormalizedDependency = {
+      id: 'js-urllib3',
+      name: 'urllib3',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.26.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['requests'], // requests in another ecosystem!
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({ dependencies: [pythonParent, jsDirect, jsTransitive] });
+    const pyId = getStablePackageId(pythonParent);
+    const jsTransId = getStablePackageId(jsTransitive);
+
+    const crossEdge = graph.edges.find((e) => e.source === pyId && e.target === jsTransId);
+    assert.strictEqual(crossEdge, undefined, 'Identical package name in python must never connect to javascript transitive package');
+  });
+
+  test('Duplicate package names across manifests or workspaces do not cause an arbitrary parent to be selected', () => {
+    const apiShared: NormalizedDependency = {
+      id: 'api-shared',
+      name: 'shared-utils',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'apps/api/package.json',
+      workspacePath: 'apps/api',
+      evidence: [],
+    };
+    const webShared: NormalizedDependency = {
+      id: 'web-shared',
+      name: 'shared-utils',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '2.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'apps/web/package.json',
+      workspacePath: 'apps/web',
+      evidence: [],
+    };
+    const webTransitive: NormalizedDependency = {
+      id: 'web-trans',
+      name: 'logger',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['shared-utils'],
+      manifestPath: 'apps/web/package.json',
+      workspacePath: 'apps/web',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({ dependencies: [apiShared, webShared, webTransitive] });
+    const apiId = getStablePackageId(apiShared);
+    const webId = getStablePackageId(webShared);
+    const transId = getStablePackageId(webTransitive);
+
+    const apiEdge = graph.edges.find((e) => e.source === apiId && e.target === transId);
+    const webEdge = graph.edges.find((e) => e.source === webId && e.target === transId);
+
+    assert.strictEqual(apiEdge, undefined, 'Must not arbitrarily pick parent from unrelated manifest');
+    assert.ok(webEdge, 'Must pick parent from matching manifest context');
+  });
+
+  test('Multiple versions of a package retain distinct identities and correct relationships', () => {
+    const lodashV3: NormalizedDependency = {
+      id: 'lodash-v3',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '3.10.1',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      dependencies: ['is-buffer'],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const lodashV4: NormalizedDependency = {
+      id: 'lodash-v4',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '4.17.21',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      dependencies: [],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const transDep: NormalizedDependency = {
+      id: 'is-buffer',
+      name: 'is-buffer',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.1.6',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['lodash'],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({ dependencies: [lodashV3, lodashV4, transDep] });
+    const v3Id = getStablePackageId(lodashV3);
+    const v4Id = getStablePackageId(lodashV4);
+    const transId = getStablePackageId(transDep);
+
+    assert.notStrictEqual(v3Id, v4Id, 'Different versions of lodash must retain distinct identities');
+    const v3Edge = graph.edges.find((e) => e.source === v3Id && e.target === transId);
+    const v4Edge = graph.edges.find((e) => e.source === v4Id && e.target === transId);
+
+    assert.ok(v3Edge, 'Must connect to lodash v3 which lists is-buffer as child');
+    assert.strictEqual(v4Edge, undefined, 'Must not connect to lodash v4');
+  });
+
+  test('An unknown or ambiguous parent creates no guessed edge', () => {
+    // Ambiguous case: two versions of parent exist in same manifest, neither lists child dependency
+    const parentA: NormalizedDependency = {
+      id: 'pkg-parent-1',
+      name: 'ambiguous-parent',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const parentB: NormalizedDependency = {
+      id: 'pkg-parent-2',
+      name: 'ambiguous-parent',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '2.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const transChild: NormalizedDependency = {
+      id: 'pkg-child',
+      name: 'some-child',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['ambiguous-parent'],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    // Unknown parent case
+    const unknownChild: NormalizedDependency = {
+      id: 'pkg-unknown-child',
+      name: 'isolated-pkg',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['non-existent-parent'],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({
+      dependencies: [parentA, parentB, transChild, unknownChild],
+    });
+
+    const childId = getStablePackageId(transChild);
+    const unknownId = getStablePackageId(unknownChild);
+
+    const childIncoming = graph.edges.filter((e) => e.target === childId);
+    assert.strictEqual(childIncoming.length, 0, 'Ambiguous parent must not create a guessed edge');
+
+    const unknownIncoming = graph.edges.filter((e) => e.target === unknownId);
+    assert.strictEqual(unknownIncoming.length, 0, 'Unknown parent must not create a guessed edge');
+  });
+
+  test('An empty manifest and a manifest with no direct dependencies do not generate dangling edges', () => {
+    const graph = buildPackageDependencyGraph({
+      dependencies: [],
+      workspaces: [
+        {
+          id: 'ws-empty',
+          rootPath: 'apps/empty',
+          manifestPath: 'apps/empty/package.json',
+          ecosystem: 'javascript',
+          packageManager: 'npm',
+          packages: [],
+          isRootWorkspace: true,
+        },
+      ],
+    });
+
+    assert.ok(graph.nodes['manifest:apps/empty/package.json'], 'Manifest root node exists');
+    assert.strictEqual(graph.edges.length, 0, 'Empty manifest must generate zero edges');
+  });
+
+  test('Every emitted edge references existing nodes and is supported by available evidence', () => {
+    const direct: NormalizedDependency = {
+      id: 'dep-d',
+      name: 'root-pkg',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const trans: NormalizedDependency = {
+      id: 'dep-t',
+      name: 'child-pkg',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['root-pkg'],
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({ dependencies: [direct, trans] });
+    assert.ok(graph.edges.length > 0);
+    for (const edge of graph.edges) {
+      assert.ok(graph.nodes[edge.source], `Edge source '${edge.source}' must exist`);
+      assert.ok(graph.nodes[edge.target], `Edge target '${edge.target}' must exist`);
+    }
+  });
+});
+
+describe('PR #68 Final Fix: Issue 2 — Registry Tags and Conservative Constraints', () => {
+  test('latest, next, beta, alpha, canary, and dev produce unknown when no independent evidence exists', () => {
+    const tags = ['latest', 'next', 'beta', 'alpha', 'canary', 'dev', 'nightly', 'insiders', 'rc', 'preview'];
+    for (const tag of tags) {
+      const res = satisfiesVersionRange('1.2.3', tag);
+      assert.strictEqual(res.status, 'unknown', `Tag '${tag}' must produce unknown status`);
+      assert.strictEqual(res.satisfies, false, `Tag '${tag}' must have satisfies: false`);
+      assert.strictEqual(res.isExactPin, false);
+    }
+  });
+
+  test('Workspace, file/path, link, Git, URL, and unsupported aliases remain unknown', () => {
+    const nonStandards = [
+      'workspace:*',
+      'workspace:^1.0.0',
+      'file:../local-pkg',
+      'link:../local-pkg',
+      'path:../local-pkg',
+      'git+https://github.com/org/repo.git#main',
+      'git://github.com/org/repo.git',
+      'git@github.com:org/repo.git',
+      'https://example.com/tarball.tgz',
+      'npm:foo@^1.0.0',
+      'github:org/repo',
+      'portal:../portal-pkg',
+    ];
+    for (const spec of nonStandards) {
+      const res = satisfiesVersionRange('1.2.3', spec);
+      assert.strictEqual(res.status, 'unknown', `Spec '${spec}' must produce unknown status`);
+      assert.strictEqual(res.satisfies, false, `Spec '${spec}' must have satisfies: false`);
+    }
+  });
+
+  test('Malformed versions, trailing characters, and unrecognized range tokens cannot result in satisfied', () => {
+    const invalidSpecs = [
+      '^1.2.3abc',
+      '~1.2.3.4.5',
+      '>=1.0.0 ??? 2.0.0',
+      'not_a_version',
+      '',
+    ];
+    for (const spec of invalidSpecs) {
+      const res = satisfiesVersionRange('1.2.3', spec);
+      assert.notStrictEqual(res.status, 'satisfied', `Invalid spec '${spec}' must never be satisfied`);
+      assert.strictEqual(res.satisfies, false);
+    }
+  });
+
+  test('Valid exact pins, caret/tilde ranges, comparison ranges, prereleases, zero-major, and ~= work correctly', () => {
+    // Caret
+    assert.strictEqual(satisfiesVersionRange('1.2.5', '^1.2.0').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('2.0.0', '^1.2.0').satisfies, false);
+    // Zero-major caret
+    assert.strictEqual(satisfiesVersionRange('0.2.5', '^0.2.0').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('0.3.0', '^0.2.0').satisfies, false);
+    assert.strictEqual(satisfiesVersionRange('0.0.5', '^0.0.5').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('0.0.6', '^0.0.5').satisfies, false);
+    // Tilde
+    assert.strictEqual(satisfiesVersionRange('1.2.5', '~1.2.0').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('1.3.0', '~1.2.0').satisfies, false);
+    // Inequality comparisons
+    assert.strictEqual(satisfiesVersionRange('1.5.0', '>=1.0.0 <2.0.0').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('2.0.0', '>=1.0.0 <2.0.0').satisfies, false);
+    // Python ~=
+    assert.strictEqual(satisfiesVersionRange('2.3.0', '~= 2.2', 'python').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('3.0.0', '~= 2.2', 'python').satisfies, false);
+    assert.strictEqual(satisfiesVersionRange('2.2.5', '~= 2.2.0', 'python').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('2.3.0', '~= 2.2.0', 'python').satisfies, false);
+    // Cargo exact pin
+    assert.strictEqual(satisfiesVersionRange('1.2.3', '= 1.2.3', 'rust').satisfies, true);
+    assert.strictEqual(satisfiesVersionRange('1.2.4', '= 1.2.3', 'rust').satisfies, false);
+  });
+
+  test('Unknown constraint results propagate into provenance and health and are never shown as verified clean', () => {
+    const prov = buildDependencyProvenance({
+      name: 'pkg-with-latest',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      declaredSpecifier: 'latest',
+      resolvedVersion: '1.0.0',
+      isDirect: true,
+    });
+
+    assert.strictEqual(prov.status, 'incomplete', 'Provenance status must be incomplete when spec is unknown tag');
+    assert.strictEqual(prov.satisfiesRange, undefined, 'satisfiesRange must be undefined');
+
+    const dep: NormalizedDependency = {
+      id: 'dep-tag',
+      name: 'pkg-with-latest',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: 'latest',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      provenance: prov,
+      evidence: [],
+    };
+
+    const health = evaluateDependencyHealth(dep, [{
+      id: 'u1',
+      packageId: 'dep-tag',
+      packageName: 'pkg-with-latest',
+      ecosystem: 'javascript',
+      filePath: 'src/index.ts',
+      location: {
+        filePath: 'src/index.ts',
+        startLine: 1,
+        endLine: 1,
+        startColumn: 1,
+        endColumn: 25,
+      },
+      snippet: "import 'pkg-with-latest';",
+      confidence: 'static_import',
+      isDirectImport: true,
+      evidenceNote: '',
+    }], {
+      totalSourceFilesDetected: 1,
+      totalSourceFilesScanned: 1,
+      languages: {
+        javascript: {
+          ecosystem: 'javascript',
+          language: 'typescript',
+          detectedFilesCount: 1,
+          scannedFilesCount: 1,
+          isSupported: true,
+          isComplete: true,
+        },
+      },
+      unsupportedExtensions: [],
+      canMakeNegativeUsageClaim: true,
+    });
+
+    assert.strictEqual(health.isClean, false, 'Tag constraint latest can never appear as verified clean');
+    assert.strictEqual(health.status, 'unknown');
+  });
+});
+
+describe('PR #68 Final Fix: Issue 3 — Source Scan Coverage for Additional and Unsupported File Extensions', () => {
+  test('Imports in .mts and .cts files are found and mapped to the correct dependency', () => {
+    const depMts: NormalizedDependency = {
+      id: 'dep-mts',
+      name: 'mts-lib',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const depCts: NormalizedDependency = {
+      id: 'dep-cts',
+      name: 'cts-lib',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const files = {
+      'src/server.mts': { content: 'import { run } from "mts-lib";\nrun();' },
+      'src/helper.cts': { content: 'const { util } = require("cts-lib");\nutil();' },
+    };
+
+    const result = mapPackagesToSourceUsage([depMts, depCts], files);
+
+    assert.strictEqual(result.usagesByPackageId['dep-mts'].length, 1, 'Import in .mts must be mapped');
+    assert.strictEqual(result.usagesByPackageId['dep-mts'][0].filePath, 'src/server.mts');
+
+    assert.strictEqual(result.usagesByPackageId['dep-cts'].length, 1, 'Require in .cts must be mapped');
+    assert.strictEqual(result.usagesByPackageId['dep-cts'][0].filePath, 'src/helper.cts');
+
+    assert.strictEqual(result.coverage.languages.javascript.scannedFilesCount, 2);
+  });
+
+  test('Unsupported source extensions are recorded in coverage rather than silently ignored', () => {
+    const files = {
+      'src/Component.vue': { content: '<template><div>Vue</div></template>' },
+      'src/Service.java': { content: 'public class Service {}' },
+      'src/Program.cs': { content: 'namespace App { class Program {} }' },
+      'src/App.swift': { content: 'import SwiftUI' },
+    };
+
+    const result = mapPackagesToSourceUsage([], files);
+
+    assert.ok(result.coverage.unsupportedExtensions.includes('.vue'), '.vue must be in unsupportedExtensions');
+    assert.ok(result.coverage.unsupportedExtensions.includes('.java'), '.java must be in unsupportedExtensions');
+    assert.ok(result.coverage.unsupportedExtensions.includes('.cs'), '.cs must be in unsupportedExtensions');
+    assert.ok(result.coverage.unsupportedExtensions.includes('.swift'), '.swift must be in unsupportedExtensions');
+    assert.strictEqual(result.coverage.totalSourceFilesDetected, 4);
+    assert.strictEqual(result.coverage.totalSourceFilesScanned, 0);
+  });
+
+  test('A package imported only from an unsupported or unscanned relevant source file is never classified as unreferenced', () => {
+    const vueDep: NormalizedDependency = {
+      id: 'dep-vue-router',
+      name: 'vue-router',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const files = {
+      'src/App.vue': { content: '<script>import { createRouter } from "vue-router";</script>' },
+      'src/main.ts': { content: 'console.log("ready");' },
+    };
+
+    const result = mapPackagesToSourceUsage([vueDep], files);
+
+    // Because App.vue is unsupported for JavaScript, JS coverage is incomplete (isComplete = false)
+    assert.strictEqual(result.coverage.languages.javascript.isComplete, false);
+    assert.strictEqual(canMakeNegativeUsageClaim('javascript', result.coverage), false);
+    assert.strictEqual(result.unreferencedPackageIds.has('dep-vue-router'), false, 'Must not classify as unreferenced when relevant source files are unsupported');
+
+    const health = evaluateDependencyHealth(vueDep, [], result.coverage);
+    assert.strictEqual(health.isUnreferenced, false);
+    assert.strictEqual(health.coverageStatus, 'partial');
+    assert.ok(health.signals.some((s) => s.kind === 'analysis_unavailable'));
+  });
+
+  test('A fully scanned, supported source ecosystem can still identify a genuinely unused direct dependency', () => {
+    const usedDep: NormalizedDependency = {
+      id: 'dep-lodash',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const unusedDep: NormalizedDependency = {
+      id: 'dep-rimraf',
+      name: 'rimraf',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const files = {
+      'src/index.ts': { content: 'import _ from "lodash";\nconsole.log(_);' },
+      'src/utils.mts': { content: 'import { clone } from "lodash";\nconsole.log(clone);' },
+    };
+
+    const result = mapPackagesToSourceUsage([usedDep, unusedDep], files);
+
+    assert.strictEqual(result.coverage.languages.javascript.isComplete, true);
+    assert.strictEqual(canMakeNegativeUsageClaim('javascript', result.coverage), true);
+    assert.strictEqual(result.unreferencedPackageIds.has('dep-used'), false);
+    assert.strictEqual(result.unreferencedPackageIds.has('dep-rimraf'), true, 'Unused dependency must be identified as unreferenced in fully scanned supported ecosystem');
+
+    const health = evaluateDependencyHealth(unusedDep, [], result.coverage);
+    assert.strictEqual(health.isUnreferenced, true);
+    assert.ok(health.signals.some((s) => s.kind === 'unreferenced'));
+  });
+
+  test('Partial coverage cannot produce contradictory clean and unreferenced claims', () => {
+    const dep: NormalizedDependency = {
+      id: 'dep-clean-partial',
+      name: 'test-pkg',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^1.0.0',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      provenance: {
+        status: 'established',
+        satisfiesRange: true,
+        declared: { status: 'established', version: '^1.0.0' },
+        resolved: { status: 'established', version: '1.0.0' },
+        installed: { status: 'unavailable' },
+        hasConflict: false,
+        conflicts: [],
+      },
+      evidence: [],
+    };
+
+    const files = {
+      'src/index.ts': { content: 'console.log("main");' },
+      'src/View.vue': { content: '<template></template>' },
+    };
+
+    const result = mapPackagesToSourceUsage([dep], files);
+    const health = evaluateDependencyHealth(dep, [], result.coverage);
+
+    // Cannot claim unreferenced when partial
+    assert.strictEqual(health.isUnreferenced, false);
+    // Cannot claim clean when source analysis is incomplete/unverified without usages
+    assert.strictEqual(health.signals.some((s) => s.kind === 'unreferenced'), false);
+  });
+
+  test('Coverage remains correct when supported and unsupported source files coexist in one repository', () => {
+    const jsDep: NormalizedDependency = {
+      id: 'dep-js',
+      name: 'unused-js-pkg',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+    const jvmDep: NormalizedDependency = {
+      id: 'dep-jvm',
+      name: 'unused-jvm-pkg',
+      ecosystem: 'jvm',
+      packageManager: 'maven',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'pom.xml',
+      evidence: [],
+    };
+
+    const files = {
+      'src/main/ts/index.ts': { content: 'console.log("hello");' },
+      'src/main/java/App.java': { content: 'public class App {}' },
+    };
+
+    const result = mapPackagesToSourceUsage([jsDep, jvmDep], files);
+
+    // JS coverage is supported and complete
+    assert.strictEqual(canMakeNegativeUsageClaim('javascript', result.coverage), true);
+    // JVM coverage is unsupported
+    assert.strictEqual(canMakeNegativeUsageClaim('jvm', result.coverage), false);
+
+    assert.strictEqual(result.unreferencedPackageIds.has('dep-js'), true, 'JS dep can be unreferenced because JS scan is complete');
+    assert.strictEqual(result.unreferencedPackageIds.has('dep-jvm'), false, 'JVM dep cannot be unreferenced because JVM scan is unsupported');
+
+    const jsHealth = evaluateDependencyHealth(jsDep, [], result.coverage);
+    assert.strictEqual(jsHealth.isUnreferenced, true);
+
+    const jvmHealth = evaluateDependencyHealth(jvmDep, [], result.coverage);
+    assert.strictEqual(jvmHealth.isUnreferenced, false);
+    assert.strictEqual(jvmHealth.coverageStatus, 'unsupported');
+  });
+
+  test('Existing multiline-import and comment false-positive regression tests continue to pass', () => {
+    const dep: NormalizedDependency = {
+      id: 'dep-fake',
+      name: 'fake-lib',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const files = {
+      'src/comment.ts': {
+        content: `
+        /*
+          import { fake } from "fake-lib";
+        */
+        const x = 1;
+        `,
+      },
+    };
+
+    const result = mapPackagesToSourceUsage([dep], files);
+    assert.strictEqual(result.usagesByPackageId['dep-fake'].length, 0, 'Import inside comment must not produce false-positive usage');
+  });
+});
+

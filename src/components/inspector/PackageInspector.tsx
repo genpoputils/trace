@@ -304,7 +304,7 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
             >
               Unreferenced in Source
             </span>
-          ) : (health.coverageStatus === 'unsupported' || health.coverageStatus === 'unscanned') && node.isDirect && sourceUsages.length === 0 ? (
+          ) : (health.coverageStatus === 'unsupported' || health.coverageStatus === 'unscanned' || health.coverageStatus === 'partial') && node.isDirect && sourceUsages.length === 0 ? (
             <span
               style={{
                 fontSize: 10,

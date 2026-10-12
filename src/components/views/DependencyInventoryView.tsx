@@ -115,20 +115,6 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
     return ECOSYSTEM_CAPABILITY_MATRIX.filter((e) => e.status === statusFilter);
   }, [statusFilter]);
 
-  // Track duplicates across ecosystems
-  const duplicateNames = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const dep of dependencies) {
-      const key = `${dep.ecosystem}:${dep.name.toLowerCase()}`;
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-    const dupes = new Set<string>();
-    for (const [key, count] of counts.entries()) {
-      if (count > 1) dupes.add(key);
-    }
-    return dupes;
-  }, [dependencies]);
-
   // Comprehensive health & provenance statistics derived dynamically using shared evaluateDependencyHealth
   const healthStats = useMemo(() => {
     let cleanCount = 0;

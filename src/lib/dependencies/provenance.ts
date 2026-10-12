@@ -185,11 +185,37 @@ export function satisfiesVersionRange(
 
   const specTrimmed = declaredSpec.trim();
 
-  // 1. Explicitly check for non-semver specifications that cannot be statically validated via standard semver rules:
+  // 1. Empty version specifications cannot be verified
+  if (!specTrimmed) {
+    return {
+      status: 'unknown',
+      satisfies: false,
+      isExactPin: false,
+      reason: `Empty version specification cannot be verified.`,
+    };
+  }
+
+  // 2. Explicitly check for non-semver specifications that cannot be statically validated via standard semver rules:
   // - Workspace protocol: workspace:*, workspace:^1.0.0
   // - Local path specifications: file:../pkg, link:../pkg, path:../pkg
   // - Git URLs: git+https://..., https://github.com/..., git@...
-  // - Registry tags: latest, next, beta, alpha, canary, dev
+  // - Registry tags: latest, next, beta, alpha, canary, dev, nightly, insiders, rc, preview, etc.
+  // - Unsupported aliases or protocols: npm:..., github:..., portal:...
+  const REGISTRY_TAGS = new Set([
+    'latest',
+    'next',
+    'beta',
+    'alpha',
+    'canary',
+    'dev',
+    'nightly',
+    'insiders',
+    'rc',
+    'preview',
+    'stable',
+    'release',
+  ]);
+
   if (
     specTrimmed.startsWith('workspace:') ||
     specTrimmed.startsWith('file:') ||
@@ -200,18 +226,22 @@ export function satisfiesVersionRange(
     specTrimmed.startsWith('git@') ||
     specTrimmed.startsWith('http://') ||
     specTrimmed.startsWith('https://') ||
-    ['next', 'beta', 'alpha', 'canary', 'dev'].includes(specTrimmed.toLowerCase())
+    specTrimmed.startsWith('npm:') ||
+    specTrimmed.startsWith('github:') ||
+    specTrimmed.startsWith('portal:') ||
+    REGISTRY_TAGS.has(specTrimmed.toLowerCase())
   ) {
     return {
       status: 'unknown',
       satisfies: false,
       isExactPin: false,
-      reason: `Specification '${declaredSpec}' is a non-standard constraint (workspace/local/URL/tag) that cannot be verified using semver rules.`,
+      reason: `Specification '${declaredSpec}' is a non-standard constraint or registry tag (workspace/local/URL/alias/tag) that cannot be verified using semver rules without independent evidence.`,
     };
   }
 
-  // 2. Wildcards that universally match within ecosystem conventions
-  if (specTrimmed === '*' || specTrimmed === 'latest' || specTrimmed === 'any' || specTrimmed === '') {
+  // 3. Wildcards that universally match within ecosystem conventions:
+  // '*' is universally treated as any version; in Dart, 'any' is the official wildcard keyword.
+  if (specTrimmed === '*' || (ecosystem === 'dart' && specTrimmed === 'any')) {
     return { status: 'satisfied', satisfies: true, isExactPin: false };
   }
 

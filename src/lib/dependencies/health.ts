@@ -116,23 +116,35 @@ export function evaluateDependencyHealth(
   let coverageStatus: DependencyHealthIndicator['coverageStatus'] = 'covered';
 
   if (!canCheckUsage) {
+    const langCov = coverage?.languages[dep.ecosystem];
     const isSupported =
       (dep.ecosystem === 'javascript' ||
         dep.ecosystem === 'python' ||
         dep.ecosystem === 'rust' ||
         dep.ecosystem === 'go') &&
-      coverage?.languages[dep.ecosystem]?.isSupported !== false;
+      langCov?.isSupported !== false;
 
-    coverageStatus = !isSupported ? 'unsupported' : 'unscanned';
+    if (!isSupported) {
+      coverageStatus = 'unsupported';
+    } else if (!langCov || langCov.scannedFilesCount === 0) {
+      coverageStatus = 'unscanned';
+    } else if (langCov.isComplete === false) {
+      coverageStatus = 'partial';
+    } else {
+      coverageStatus = 'unscanned';
+    }
 
     if (dep.isDirect && sourceUsages.length === 0) {
       signals.push({
         kind: 'analysis_unavailable',
         severity: 'info',
         title: 'Source Usage Analysis Unavailable',
-        message: coverageStatus === 'unsupported'
-          ? `Source parser for ecosystem '${dep.ecosystem}' is not implemented; static usage cannot be verified.`
-          : `No source files for ecosystem '${dep.ecosystem}' were detected in repository input; usage is unverified.`,
+        message:
+          coverageStatus === 'unsupported'
+            ? `Source parser for ecosystem '${dep.ecosystem}' is not implemented; static usage cannot be verified.`
+            : coverageStatus === 'partial'
+            ? `Source scan for ecosystem '${dep.ecosystem}' is partial or contains unsupported file extensions; negative usage cannot be verified.`
+            : `No source files for ecosystem '${dep.ecosystem}' were detected in repository input; usage is unverified.`,
         evidencePath: dep.manifestPath,
       });
     }
