@@ -1565,3 +1565,320 @@ select:focus-visible,
   border-color: var(--primary-blue);
 }
 
+/* ==============================================================================
+   Repository Selector, Re-sync Button & Local Data Reset
+   ============================================================================== */
+
+.header-repo-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.repo-selector-container {
+  position: relative;
+  display: inline-block;
+}
+
+.repo-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 260px;
+  transition: all 0.15s ease;
+}
+
+.repo-selector-trigger:hover,
+.repo-selector-trigger.active {
+  background: var(--bg-secondary);
+  border-color: var(--primary-blue);
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+}
+
+.repo-selector-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.repo-selector-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.repo-selector-chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.repo-selector-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Popover Panel */
+.repo-selector-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 390px;
+  max-width: 92vw;
+  max-height: 440px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 100;
+}
+
+.repo-selector-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.repo-selector-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.repo-selector-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.repo-selector-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Repository List */
+.repo-selector-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 330px;
+  padding: 4px 0;
+}
+
+.repo-selector-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.repo-selector-group {
+  margin-bottom: 4px;
+}
+
+.repo-selector-group-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 8px 12px 4px 12px;
+}
+
+.repo-selector-row {
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.repo-selector-row:last-child {
+  border-bottom: none;
+}
+
+.repo-selector-row:hover,
+.repo-selector-row.highlighted {
+  background: var(--bg-tertiary);
+}
+
+.repo-selector-row.selected {
+  background: var(--blue-selection-bg);
+}
+
+.repo-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.repo-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.repo-row-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.repo-row-check {
+  margin-left: auto;
+  color: var(--primary-blue);
+  flex-shrink: 0;
+}
+
+.repo-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.repo-row-branch,
+.repo-row-sha {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.repo-row-counts {
+  display: inline-flex;
+  align-items: center;
+}
+
+.repo-row-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Source Badges */
+.repo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  line-height: 1.2;
+}
+
+.repo-badge-github {
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-primary);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="dark"] .repo-badge-github {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.repo-badge-upload {
+  background: var(--warning-bg);
+  color: var(--warning-amber);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.repo-badge-sample {
+  background: var(--blue-selection-bg);
+  color: var(--primary-blue);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+
+/* Popover Footer / Management Area */
+.repo-selector-footer {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.repo-selector-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.btn-clear-local {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--error-red);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn-clear-local:hover {
+  background: var(--error-bg);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+
+/* Header Re-sync Button */
+.btn-resync {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn-resync:not(:disabled):hover {
+  background: var(--bg-secondary);
+  border-color: var(--primary-blue);
+  color: var(--primary-blue);
+}
+
+.btn-resync:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .repo-selector-trigger {
+    max-width: 170px;
+  }
+  .repo-selector-name {
+    max-width: 90px;
+  }
+}
+

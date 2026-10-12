@@ -19,6 +19,7 @@ import { browserAnalysisService } from '@/lib/services/browser-analysis-service'
 
 
 import { ProjectSummary } from '@/lib/storage/local-project-store';
+import { RepositorySelector } from './RepositorySelector';
 
 export function GitHubIcon({ size = 14 }: { size?: number }) {
   return (
@@ -37,7 +38,10 @@ interface AppHeaderProps {
   currentProjectId: string;
   projectsList: ProjectSummary[];
   theme: 'light' | 'dark';
+  isSyncing?: boolean;
   onSelectProject: (projectId: string) => void;
+  onResyncCurrentProject?: () => void;
+  onOpenClearLocalDataModal: () => void;
   onOpenSearch: () => void;
   onOpenGitHubModal: () => void;
   onOpenUploadModal: () => void;
@@ -49,7 +53,10 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   currentProjectId,
   projectsList,
   theme,
+  isSyncing = false,
   onSelectProject,
+  onResyncCurrentProject,
+  onOpenClearLocalDataModal,
   onOpenSearch,
   onOpenGitHubModal,
   onOpenUploadModal,
@@ -65,6 +72,17 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   const repoName = gitMeta ? `${gitMeta.owner}/${gitMeta.repo}` : analysis?.projectName || '';
   const branchName = gitMeta?.branch || 'main';
   const commitShortSha = gitMeta?.commitSha ? gitMeta.commitSha.slice(0, 7) : null;
+
+  // Genuine GitHub project check: sample and ZIP uploads cannot be re-synced
+  const isGitHubProject = Boolean(
+    analysis?.gitMetadata?.owner &&
+    analysis?.gitMetadata?.repo &&
+    analysis?.gitMetadata?.commitSha &&
+    analysis.projectId !== 'sample-ecommerce-api' &&
+    !analysis.isSample &&
+    analysis.sourceType !== 'upload' &&
+    analysis.sourceType !== 'sample'
+  );
 
   return (
     <header className="app-header" role="banner">
@@ -125,33 +143,43 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
       {/* Header Actions & Controls */}
       <div className="header-controls">
-        {/* Project Switcher */}
-        {projectsList.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <label htmlFor="project-switcher" style={{ display: 'none' }}>Select Project</label>
-            <select
-              id="project-switcher"
-              value={currentProjectId}
-              onChange={(e) => onSelectProject(e.target.value)}
-              className="tool-btn"
-              style={{
-                padding: '5px 8px',
-                fontSize: 12,
-                maxWidth: 160,
-                textOverflow: 'ellipsis',
-                background: 'var(--bg-tertiary)',
-              }}
-              title="Switch repository or project"
-              aria-label="Switch project"
-            >
-              {projectsList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Repository Switcher & Re-sync Control Group */}
+        <div className="header-repo-controls">
+          <RepositorySelector
+            currentProjectId={currentProjectId}
+            projectsList={projectsList}
+            onSelectProject={onSelectProject}
+            onOpenClearLocalDataModal={onOpenClearLocalDataModal}
+          />
+
+          <button
+            type="button"
+            className="btn-resync"
+            onClick={onResyncCurrentProject}
+            disabled={!isGitHubProject || isSyncing || session.status === 'running'}
+            title={
+              !isGitHubProject
+                ? 'Re-sync is only available for GitHub repositories. Sample projects and ZIP uploads cannot be re-synced.'
+                : isSyncing || session.status === 'running'
+                ? 'Analysis or sync in progress...'
+                : `Fetch latest remote commit and re-sync ${repoName}`
+            }
+            aria-label="Re-sync current GitHub repository"
+          >
+            <RefreshCw
+              size={12}
+              className={
+                isSyncing || (session.status === 'running' && session.currentStage === 'checking_remote')
+                  ? 'animate-spin'
+                  : ''
+              }
+              aria-hidden="true"
+            />
+            <span className="btn-label-desktop">
+              {isSyncing ? 'Syncing...' : 'Re-sync'}
+            </span>
+          </button>
+        </div>
 
         {/* Global Search Trigger */}
         <button
