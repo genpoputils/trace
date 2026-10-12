@@ -59,6 +59,7 @@ export class SwiftAdapter implements EcosystemAdapter {
     context: AdapterParseContext
   ): AdapterParseResult {
     const dependencies: NormalizedDependency[] = [];
+    const directDepMap = new Map<string, NormalizedDependency>();
     const diagnostics: ManifestDiagnostic[] = [];
     const dir = getDirname(manifestFile.path);
     const workspacePath = dir === '.' ? undefined : dir;
@@ -97,8 +98,15 @@ export class SwiftAdapter implements EcosystemAdapter {
             },
           ];
 
-          dependencies.push({
-            id: `swift:spm:${String(name).toLowerCase()}@${manifestFile.path}`,
+          const depId = `swift:spm:${String(name).toLowerCase()}@${manifestFile.path}`;
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push(...evidence);
+            continue;
+          }
+
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'swift',
             packageManager: 'spm',
             name: String(name),
@@ -112,7 +120,10 @@ export class SwiftAdapter implements EcosystemAdapter {
             workspacePath,
             evidence,
             notes: revision ? [`Git commit: ${revision}`] : undefined,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       } catch (err) {
         diagnostics.push({

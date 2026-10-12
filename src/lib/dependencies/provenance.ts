@@ -30,17 +30,20 @@ export interface ParsedSemver {
 }
 
 /**
- * Parses a version string into semantic parts (major.minor.patch[-prerelease]).
+ * Parses a version string into semantic parts (major.minor.patch[-prerelease][+build]).
+ * Strictly validates complete format from start ^ to end $; does not accept invalid trailing characters.
  */
 export function parseSemver(versionStr: string): ParsedSemver | null {
   if (!versionStr || typeof versionStr !== 'string') return null;
 
+  const trimmed = versionStr.trim();
   // Clean leading 'v', '=', or spaces
-  const clean = versionStr.trim().replace(/^[=vV\s]+/, '');
+  const clean = trimmed.replace(/^[=vV\s]+/, '');
   if (!clean) return null;
 
-  // Match e.g. 1.2.3 or 1.2.3-alpha.1 or 1.2 or 1
-  const match = clean.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9a-zA-Z_.-]+))?/);
+  // Strict semantic version syntax with start (^) and end ($) anchors
+  const strictRegex = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9a-zA-Z.-]+))?(?:\+([0-9a-zA-Z.-]+))?$/;
+  const match = clean.match(strictRegex);
   if (!match) return null;
 
   return {
@@ -48,12 +51,12 @@ export function parseSemver(versionStr: string): ParsedSemver | null {
     minor: match[2] !== undefined ? parseInt(match[2], 10) : 0,
     patch: match[3] !== undefined ? parseInt(match[3], 10) : 0,
     prerelease: match[4],
-    raw: versionStr.trim(),
+    raw: trimmed,
   };
 }
 
 /**
- * Compares two semantic version strings.
+ * Compares two semantic version strings adhering to SemVer 2.0.0 rule 11.
  * Returns -1 if v1 < v2, 0 if v1 === v2, 1 if v1 > v2.
  */
 export function compareSemver(v1Str: string, v2Str: string): number {
@@ -68,10 +71,34 @@ export function compareSemver(v1Str: string, v2Str: string): number {
   if (p1.minor !== p2.minor) return p1.minor > p2.minor ? 1 : -1;
   if (p1.patch !== p2.patch) return p1.patch > p2.patch ? 1 : -1;
 
+  // SemVer spec 2.0.0, rule 11: Normal version has higher precedence than prerelease version
   if (!p1.prerelease && p2.prerelease) return 1;
   if (p1.prerelease && !p2.prerelease) return -1;
   if (p1.prerelease && p2.prerelease) {
-    return p1.prerelease.localeCompare(p2.prerelease);
+    const id1 = p1.prerelease.split('.');
+    const id2 = p2.prerelease.split('.');
+    const minLen = Math.min(id1.length, id2.length);
+    for (let i = 0; i < minLen; i++) {
+      const a = id1[i];
+      const b = id2[i];
+      const aIsNum = /^\d+$/.test(a);
+      const bIsNum = /^\d+$/.test(b);
+      if (aIsNum && bIsNum) {
+        const numA = parseInt(a, 10);
+        const numB = parseInt(b, 10);
+        if (numA !== numB) return numA > numB ? 1 : -1;
+      } else if (aIsNum && !bIsNum) {
+        return -1;
+      } else if (!aIsNum && bIsNum) {
+        return 1;
+      } else {
+        const cmp = a.localeCompare(b);
+        if (cmp !== 0) return cmp;
+      }
+    }
+    if (id1.length !== id2.length) {
+      return id1.length > id2.length ? 1 : -1;
+    }
   }
 
   return 0;
@@ -126,20 +153,30 @@ export function isExactVersionPin(spec: string, ecosystem?: EcosystemType): bool
   return parsed !== null && /^\d+\.\d+\.\d+/.test(clean);
 }
 
+export interface VersionSatisfactionResult {
+  status: 'satisfied' | 'not_satisfied' | 'unknown';
+  satisfies: boolean;
+  isExactPin: boolean;
+  reason?: string;
+}
+
 /**
  * Checks whether a concrete resolved version satisfies a declared version range / specification.
+ * Distinguishes: satisfied, not satisfied, and unknown / unable to verify.
+ * Never defaults unsupported, ambiguous, or malformed constraints to satisfied.
  */
 export function satisfiesVersionRange(
   resolvedVersion: string,
   declaredSpec: string,
   ecosystem?: EcosystemType
-): { satisfies: boolean; isExactPin: boolean; reason?: string } {
+): VersionSatisfactionResult {
   const isPin = isExactVersionPin(declaredSpec, ecosystem);
   const cleanResolved = resolvedVersion.trim().replace(/^[=vV\s]+/, '');
   const pResolved = parseSemver(cleanResolved);
 
   if (!pResolved) {
     return {
+      status: 'unknown',
       satisfies: false,
       isExactPin: isPin,
       reason: `Could not parse resolved version '${resolvedVersion}'.`,
@@ -148,40 +185,72 @@ export function satisfiesVersionRange(
 
   const specTrimmed = declaredSpec.trim();
 
-  // Wildcard matches anything
-  if (specTrimmed === '*' || specTrimmed === 'latest' || specTrimmed === 'any' || specTrimmed === '') {
-    return { satisfies: true, isExactPin: false };
+  // 1. Explicitly check for non-semver specifications that cannot be statically validated via standard semver rules:
+  // - Workspace protocol: workspace:*, workspace:^1.0.0
+  // - Local path specifications: file:../pkg, link:../pkg, path:../pkg
+  // - Git URLs: git+https://..., https://github.com/..., git@...
+  // - Registry tags: latest, next, beta, alpha, canary, dev
+  if (
+    specTrimmed.startsWith('workspace:') ||
+    specTrimmed.startsWith('file:') ||
+    specTrimmed.startsWith('link:') ||
+    specTrimmed.startsWith('path:') ||
+    specTrimmed.startsWith('git+') ||
+    specTrimmed.startsWith('git:') ||
+    specTrimmed.startsWith('git@') ||
+    specTrimmed.startsWith('http://') ||
+    specTrimmed.startsWith('https://') ||
+    ['next', 'beta', 'alpha', 'canary', 'dev'].includes(specTrimmed.toLowerCase())
+  ) {
+    return {
+      status: 'unknown',
+      satisfies: false,
+      isExactPin: false,
+      reason: `Specification '${declaredSpec}' is a non-standard constraint (workspace/local/URL/tag) that cannot be verified using semver rules.`,
+    };
   }
 
-  // Handle Cargo bare semver (in Cargo, "1.28" or "1.28.2" without '=' is treated as "^1.28" / "^1.28.2")
+  // 2. Wildcards that universally match within ecosystem conventions
+  if (specTrimmed === '*' || specTrimmed === 'latest' || specTrimmed === 'any' || specTrimmed === '') {
+    return { status: 'satisfied', satisfies: true, isExactPin: false };
+  }
+
+  // 3. Handle Cargo bare semver (in Cargo, "1.28" or "1.28.2" without '=' is treated as "^1.28" / "^1.28.2")
   let effectiveSpec = specTrimmed;
   if (ecosystem === 'rust') {
     if (specTrimmed.startsWith('=')) {
       effectiveSpec = specTrimmed.replace(/^=\s*/, '');
       const pPin = parseSemver(effectiveSpec);
-      if (pPin) {
-        const matches = compareSemver(cleanResolved, effectiveSpec) === 0;
+      if (!pPin) {
         return {
-          satisfies: matches,
+          status: 'unknown',
+          satisfies: false,
           isExactPin: true,
-          reason: matches
-            ? undefined
-            : `Lockfile resolved '${resolvedVersion}' does not match exact Cargo pin '${declaredSpec}'.`,
+          reason: `Malformed Cargo pin version '${declaredSpec}'.`,
         };
       }
+      const matches = compareSemver(cleanResolved, effectiveSpec) === 0;
+      return {
+        status: matches ? 'satisfied' : 'not_satisfied',
+        satisfies: matches,
+        isExactPin: true,
+        reason: matches
+          ? undefined
+          : `Lockfile resolved '${resolvedVersion}' does not match exact Cargo pin '${declaredSpec}'.`,
+      };
     } else if (!specTrimmed.startsWith('^') && !specTrimmed.startsWith('~') && !specTrimmed.startsWith('>')) {
       effectiveSpec = `^${specTrimmed}`;
     }
   }
 
-  // Python exact pin handling
+  // 4. Python exact pin handling (== or ===)
   if (ecosystem === 'python' && (specTrimmed.startsWith('==') || specTrimmed.startsWith('==='))) {
     const pinVal = specTrimmed.replace(/^={2,3}\s*/, '');
     if (pinVal.endsWith('.*')) {
-      // e.g. == 2.1.*
       const prefix = pinVal.slice(0, -2);
       const matches = cleanResolved.startsWith(prefix);
       return {
+        status: matches ? 'satisfied' : 'not_satisfied',
         satisfies: matches,
         isExactPin: false,
         reason: matches
@@ -189,8 +258,18 @@ export function satisfiesVersionRange(
           : `Resolved '${resolvedVersion}' does not match Python wildcard pattern '${declaredSpec}'.`,
       };
     }
+    const pPin = parseSemver(pinVal);
+    if (!pPin) {
+      return {
+        status: 'unknown',
+        satisfies: false,
+        isExactPin: true,
+        reason: `Malformed Python pin specification '${declaredSpec}'.`,
+      };
+    }
     const matches = compareSemver(cleanResolved, pinVal) === 0;
     return {
+      status: matches ? 'satisfied' : 'not_satisfied',
       satisfies: matches,
       isExactPin: true,
       reason: matches
@@ -199,11 +278,18 @@ export function satisfiesVersionRange(
     };
   }
 
-  // Python compatible release (~= 2.2 or ~= 2.2.0)
+  // 5. Python compatible release (~= 2.2 or ~= 2.2.0)
   if (effectiveSpec.startsWith('~=')) {
     const target = effectiveSpec.replace(/^~=\s*/, '');
     const pTarget = parseSemver(target);
-    if (!pTarget) return { satisfies: false, isExactPin: false, reason: 'Invalid ~= specification' };
+    if (!pTarget) {
+      return {
+        status: 'unknown',
+        satisfies: false,
+        isExactPin: false,
+        reason: `Malformed Python compatible release '~=${target}'.`,
+      };
+    }
 
     const parts = target.split('.');
     if (parts.length <= 2) {
@@ -211,6 +297,7 @@ export function satisfiesVersionRange(
       const satisfies =
         compareSemver(cleanResolved, target) >= 0 && pResolved.major === pTarget.major;
       return {
+        status: satisfies ? 'satisfied' : 'not_satisfied',
         satisfies,
         isExactPin: false,
         reason: satisfies
@@ -224,6 +311,7 @@ export function satisfiesVersionRange(
         pResolved.major === pTarget.major &&
         pResolved.minor === pTarget.minor;
       return {
+        status: satisfies ? 'satisfied' : 'not_satisfied',
         satisfies,
         isExactPin: false,
         reason: satisfies
@@ -233,11 +321,21 @@ export function satisfiesVersionRange(
     }
   }
 
-  // Exact pin without prefix
+  // 6. Exact pin without prefix
   if (isPin) {
     const pinClean = specTrimmed.replace(/^[=vV\s]+/, '');
+    const pPin = parseSemver(pinClean);
+    if (!pPin) {
+      return {
+        status: 'unknown',
+        satisfies: false,
+        isExactPin: true,
+        reason: `Malformed exact pin version '${declaredSpec}'.`,
+      };
+    }
     const matches = compareSemver(cleanResolved, pinClean) === 0;
     return {
+      status: matches ? 'satisfied' : 'not_satisfied',
       satisfies: matches,
       isExactPin: true,
       reason: matches
@@ -246,23 +344,42 @@ export function satisfiesVersionRange(
     };
   }
 
-  // Caret ranges: ^1.2.3, ^0.2.3, ^0.0.3
+  // 7. Caret ranges: ^1.2.3, ^0.2.3, ^0.0.3
   if (effectiveSpec.startsWith('^')) {
     const baseStr = effectiveSpec.replace(/^\^\s*/, '');
     const pBase = parseSemver(baseStr);
-    if (!pBase) return { satisfies: false, isExactPin: false, reason: 'Invalid caret range' };
+    if (!pBase) {
+      return {
+        status: 'unknown',
+        satisfies: false,
+        isExactPin: false,
+        reason: `Invalid or malformed caret range specification '${declaredSpec}'.`,
+      };
+    }
 
     if (compareSemver(cleanResolved, baseStr) < 0) {
       return {
+        status: 'not_satisfied',
         satisfies: false,
         isExactPin: false,
         reason: `Resolved version '${resolvedVersion}' is below minimum declared version '${baseStr}'.`,
       };
     }
 
+    // Prerelease guard: a range without prerelease base cannot match a prerelease resolved version
+    if (pResolved.prerelease && !pBase.prerelease) {
+      return {
+        status: 'not_satisfied',
+        satisfies: false,
+        isExactPin: false,
+        reason: `Resolved prerelease version '${resolvedVersion}' does not satisfy range '${declaredSpec}'.`,
+      };
+    }
+
     if (pBase.major > 0) {
       const satisfies = pResolved.major === pBase.major;
       return {
+        status: satisfies ? 'satisfied' : 'not_satisfied',
         satisfies,
         isExactPin: false,
         reason: satisfies
@@ -272,6 +389,7 @@ export function satisfiesVersionRange(
     } else if (pBase.minor > 0) {
       const satisfies = pResolved.major === 0 && pResolved.minor === pBase.minor;
       return {
+        status: satisfies ? 'satisfied' : 'not_satisfied',
         satisfies,
         isExactPin: false,
         reason: satisfies
@@ -282,6 +400,7 @@ export function satisfiesVersionRange(
       const satisfies =
         pResolved.major === 0 && pResolved.minor === 0 && pResolved.patch === pBase.patch;
       return {
+        status: satisfies ? 'satisfied' : 'not_satisfied',
         satisfies,
         isExactPin: false,
         reason: satisfies
@@ -291,22 +410,40 @@ export function satisfiesVersionRange(
     }
   }
 
-  // Tilde ranges: ~1.2.3 -> >= 1.2.3, < 1.3.0
+  // 8. Tilde ranges: ~1.2.3 -> >= 1.2.3, < 1.3.0
   if (effectiveSpec.startsWith('~')) {
     const baseStr = effectiveSpec.replace(/^~\s*/, '');
     const pBase = parseSemver(baseStr);
-    if (!pBase) return { satisfies: false, isExactPin: false, reason: 'Invalid tilde range' };
+    if (!pBase) {
+      return {
+        status: 'unknown',
+        satisfies: false,
+        isExactPin: false,
+        reason: `Invalid or malformed tilde range specification '${declaredSpec}'.`,
+      };
+    }
 
     if (compareSemver(cleanResolved, baseStr) < 0) {
       return {
+        status: 'not_satisfied',
         satisfies: false,
         isExactPin: false,
         reason: `Resolved version '${resolvedVersion}' is below tilde range minimum '${baseStr}'.`,
       };
     }
 
+    if (pResolved.prerelease && !pBase.prerelease) {
+      return {
+        status: 'not_satisfied',
+        satisfies: false,
+        isExactPin: false,
+        reason: `Resolved prerelease version '${resolvedVersion}' does not satisfy range '${declaredSpec}'.`,
+      };
+    }
+
     const satisfies = pResolved.major === pBase.major && pResolved.minor === pBase.minor;
     return {
+      status: satisfies ? 'satisfied' : 'not_satisfied',
       satisfies,
       isExactPin: false,
       reason: satisfies
@@ -315,14 +452,25 @@ export function satisfiesVersionRange(
     };
   }
 
-  // Compound comparisons like ">=1.0.0, <2.0.0" or ">=1.0.0 <2.0.0"
+  // 9. Compound comparisons like ">=1.0.0, <2.0.0" or ">=1.0.0 <2.0.0"
   const compTokens = effectiveSpec.split(/[,;\s]+/).filter(Boolean);
   let allSatisfied = true;
   let failReason: string | undefined;
+  let validTokensCount = 0;
 
   for (const token of compTokens) {
     if (token.startsWith('>=')) {
       const val = token.replace(/^>=\s*/, '');
+      const pVal = parseSemver(val);
+      if (!pVal) {
+        return {
+          status: 'unknown',
+          satisfies: false,
+          isExactPin: false,
+          reason: `Malformed version '${val}' in constraint '${token}'.`,
+        };
+      }
+      validTokensCount++;
       if (compareSemver(cleanResolved, val) < 0) {
         allSatisfied = false;
         failReason = `Resolved '${resolvedVersion}' is below required >= ${val}.`;
@@ -330,6 +478,16 @@ export function satisfiesVersionRange(
       }
     } else if (token.startsWith('>')) {
       const val = token.replace(/^>\s*/, '');
+      const pVal = parseSemver(val);
+      if (!pVal) {
+        return {
+          status: 'unknown',
+          satisfies: false,
+          isExactPin: false,
+          reason: `Malformed version '${val}' in constraint '${token}'.`,
+        };
+      }
+      validTokensCount++;
       if (compareSemver(cleanResolved, val) <= 0) {
         allSatisfied = false;
         failReason = `Resolved '${resolvedVersion}' is not strictly greater than > ${val}.`;
@@ -337,6 +495,16 @@ export function satisfiesVersionRange(
       }
     } else if (token.startsWith('<=')) {
       const val = token.replace(/^<=\s*/, '');
+      const pVal = parseSemver(val);
+      if (!pVal) {
+        return {
+          status: 'unknown',
+          satisfies: false,
+          isExactPin: false,
+          reason: `Malformed version '${val}' in constraint '${token}'.`,
+        };
+      }
+      validTokensCount++;
       if (compareSemver(cleanResolved, val) > 0) {
         allSatisfied = false;
         failReason = `Resolved '${resolvedVersion}' exceeds <= ${val}.`;
@@ -344,6 +512,16 @@ export function satisfiesVersionRange(
       }
     } else if (token.startsWith('<')) {
       const val = token.replace(/^<\s*/, '');
+      const pVal = parseSemver(val);
+      if (!pVal) {
+        return {
+          status: 'unknown',
+          satisfies: false,
+          isExactPin: false,
+          reason: `Malformed version '${val}' in constraint '${token}'.`,
+        };
+      }
+      validTokensCount++;
       if (compareSemver(cleanResolved, val) >= 0) {
         allSatisfied = false;
         failReason = `Resolved '${resolvedVersion}' is not strictly less than < ${val}.`;
@@ -351,15 +529,43 @@ export function satisfiesVersionRange(
       }
     } else if (token.startsWith('!=')) {
       const val = token.replace(/^!=\s*/, '');
+      const pVal = parseSemver(val);
+      if (!pVal) {
+        return {
+          status: 'unknown',
+          satisfies: false,
+          isExactPin: false,
+          reason: `Malformed version '${val}' in constraint '${token}'.`,
+        };
+      }
+      validTokensCount++;
       if (compareSemver(cleanResolved, val) === 0) {
         allSatisfied = false;
         failReason = `Resolved '${resolvedVersion}' matches excluded version != ${val}.`;
         break;
       }
+    } else {
+      // Unrecognized syntax or unsupported construct (e.g. malformed string)
+      return {
+        status: 'unknown',
+        satisfies: false,
+        isExactPin: false,
+        reason: `Unsupported, malformed, or ambiguous specification token '${token}'.`,
+      };
     }
   }
 
+  if (validTokensCount === 0) {
+    return {
+      status: 'unknown',
+      satisfies: false,
+      isExactPin: false,
+      reason: `Unsupported or ambiguous specification '${declaredSpec}'.`,
+    };
+  }
+
   return {
+    status: allSatisfied ? 'satisfied' : 'not_satisfied',
     satisfies: allSatisfied,
     isExactPin: false,
     reason: failReason,
@@ -548,7 +754,7 @@ export function buildDependencyProvenance(
     // Verify satisfaction if direct dependency with declared range
     if (isDirect && declaredSpecifier) {
       const check = satisfiesVersionRange(resolvedVersion, declaredSpecifier, ecosystem);
-      if (!check.satisfies) {
+      if (check.status === 'not_satisfied') {
         resolvedStatus = 'conflicting';
         conflicts.push({
           kind: 'range_mismatch',
@@ -560,6 +766,8 @@ export function buildDependencyProvenance(
           actualVersion: resolvedVersion,
           conflictingSourcePaths: [manifestPath, lockfilePath],
         });
+      } else if (check.status === 'unknown') {
+        resolvedStatus = 'incomplete';
       }
     }
 
@@ -643,7 +851,13 @@ export function buildDependencyProvenance(
   let satisfiesRange: boolean | undefined = undefined;
   if (resolvedVersion && declaredSpecifier) {
     const check = satisfiesVersionRange(resolvedVersion, declaredSpecifier, ecosystem);
-    satisfiesRange = check.satisfies;
+    if (check.status === 'satisfied') {
+      satisfiesRange = true;
+    } else if (check.status === 'not_satisfied') {
+      satisfiesRange = false;
+    } else {
+      satisfiesRange = undefined;
+    }
   }
 
   let overallStatus: VersionProvenanceStatus = 'established';
@@ -655,12 +869,16 @@ export function buildDependencyProvenance(
     } else {
       overallStatus = 'incomplete';
     }
-  } else if (resolved.status === 'established') {
+  } else if (resolved.status === 'incomplete' || (satisfiesRange === undefined && declaredSpecifier && isDirect)) {
+    overallStatus = 'incomplete';
+  } else if (resolved.status === 'established' && (satisfiesRange === true || (!declaredSpecifier && !isDirect))) {
     overallStatus = 'established';
   } else if (declared.status === 'established' && resolved.status === 'unavailable') {
     overallStatus = 'incomplete';
   } else if (declared.status === 'unavailable' && resolved.status === 'unavailable') {
     overallStatus = 'unavailable';
+  } else {
+    overallStatus = 'incomplete';
   }
 
   return {
@@ -764,6 +982,10 @@ export function reconcileWorkspaceProvenance(
               isDirect: dep.isDirect,
             });
           }
+          dep.provenance.hasConflict = true;
+          if (dep.provenance.status === 'established') {
+            dep.provenance.status = 'incomplete';
+          }
           dep.provenance.conflicts.push({
             kind: 'duplicate_version_in_workspace',
             severity: 'warning',
@@ -798,6 +1020,10 @@ export function reconcileWorkspaceProvenance(
           resolvedVersion: dep.versionResolved,
           isDirect: dep.isDirect,
         });
+      }
+      dep.provenance.hasConflict = true;
+      if (dep.provenance.status === 'established') {
+        dep.provenance.status = 'incomplete';
       }
       dep.provenance.conflicts.push({
         kind: 'duplicate_version_in_workspace',

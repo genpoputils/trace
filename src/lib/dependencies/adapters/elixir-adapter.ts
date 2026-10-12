@@ -59,6 +59,7 @@ export class ElixirAdapter implements EcosystemAdapter {
     context: AdapterParseContext
   ): AdapterParseResult {
     const dependencies: NormalizedDependency[] = [];
+    const directDepMap = new Map<string, NormalizedDependency>();
     const diagnostics: ManifestDiagnostic[] = [];
     const dir = getDirname(manifestFile.path);
     const workspacePath = dir === '.' ? undefined : dir;
@@ -84,8 +85,15 @@ export class ElixirAdapter implements EcosystemAdapter {
             },
           ];
 
-          dependencies.push({
-            id: `elixir:mix:${name.toLowerCase()}@${manifestFile.path}`,
+          const depId = `elixir:mix:${name.toLowerCase()}@${manifestFile.path}`;
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push(...evidence);
+            continue;
+          }
+
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'elixir',
             packageManager: 'mix',
             name,
@@ -98,7 +106,10 @@ export class ElixirAdapter implements EcosystemAdapter {
             lockfilePath: lockFile.path,
             workspacePath,
             evidence,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
           continue;
         }
 
@@ -109,8 +120,25 @@ export class ElixirAdapter implements EcosystemAdapter {
           const url = gitMatch[2];
           const commit = gitMatch[3];
 
-          dependencies.push({
-            id: `elixir:mix:${name.toLowerCase()}@${manifestFile.path}`,
+          const evidence: DependencyEvidence[] = [
+            {
+              sourceFilePath: lockFile.path,
+              sourceKind: 'lockfile',
+              evidenceKind: 'resolved_lockfile',
+              resolvedVersion: commit,
+              resolvedUrl: url,
+            },
+          ];
+
+          const depId = `elixir:mix:${name.toLowerCase()}@${manifestFile.path}`;
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push(...evidence);
+            continue;
+          }
+
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'elixir',
             packageManager: 'mix',
             name,
@@ -122,16 +150,11 @@ export class ElixirAdapter implements EcosystemAdapter {
             manifestPath: manifestFile.path,
             lockfilePath: lockFile.path,
             workspacePath,
-            evidence: [
-              {
-                sourceFilePath: lockFile.path,
-                sourceKind: 'lockfile',
-                evidenceKind: 'resolved_lockfile',
-                resolvedVersion: commit,
-                resolvedUrl: url,
-              },
-            ],
-          });
+            evidence,
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     } else {

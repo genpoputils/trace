@@ -60,6 +60,7 @@ export class RubyAdapter implements EcosystemAdapter {
     context: AdapterParseContext
   ): AdapterParseResult {
     const dependencies: NormalizedDependency[] = [];
+    const directDepMap = new Map<string, NormalizedDependency>();
     const diagnostics: ManifestDiagnostic[] = [];
     const dir = getDirname(manifestFile.path);
     const workspacePath = dir === '.' ? undefined : dir;
@@ -149,8 +150,21 @@ export class RubyAdapter implements EcosystemAdapter {
           });
         }
 
-        dependencies.push({
-          id: `ruby:bundler:${name.toLowerCase()}@${manifestFile.path}`,
+        const depId = `ruby:bundler:${name.toLowerCase()}@${manifestFile.path}`;
+        const existing = directDepMap.get(depId);
+        if (existing) {
+          existing.evidence.push(...evidence);
+          if (scope === 'runtime' && existing.scope === 'dev') {
+            existing.scope = 'runtime';
+          }
+          if (rawSpec !== '*' && (!existing.versionDeclared || existing.versionDeclared === '*')) {
+            existing.versionDeclared = rawSpec;
+          }
+          continue;
+        }
+
+        const dep: NormalizedDependency = {
+          id: depId,
           ecosystem: 'ruby',
           packageManager: 'bundler',
           name,
@@ -163,7 +177,10 @@ export class RubyAdapter implements EcosystemAdapter {
           lockfilePath: lockFile?.path,
           workspacePath,
           evidence,
-        });
+        };
+
+        directDepMap.set(depId, dep);
+        dependencies.push(dep);
       }
     }
 

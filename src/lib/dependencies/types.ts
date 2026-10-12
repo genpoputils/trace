@@ -53,6 +53,17 @@ export type DependencyScope =
   | 'test'
   | 'unknown';
 
+export const SCOPE_PRECEDENCE: Record<DependencyScope, number> = {
+  runtime: 7,
+  build: 6,
+  peer: 5,
+  bundled: 4,
+  test: 3,
+  dev: 2,
+  optional: 1,
+  unknown: 0,
+};
+
 export type EvidenceKind =
   | 'declared_only'
   | 'resolved_lockfile'
@@ -154,6 +165,9 @@ export interface NormalizedDependency {
   scope: DependencyScope;
   isDirect: boolean;
   isTransitive: boolean;
+  isWorkspace?: boolean;
+  parentPackages?: string[]; // Names or IDs of parent packages that depend on this package
+  dependencies?: string[]; // Outgoing child dependency package names
   manifestPath: string;
   lockfilePath?: string;
   workspacePath?: string;
@@ -242,6 +256,26 @@ export interface EcosystemAdapter {
   ): Promise<AdapterParseResult> | AdapterParseResult;
 }
 
+export interface SourceLanguageCoverage {
+  ecosystem: EcosystemType;
+  language: string;
+  detectedFilesCount: number;
+  scannedFilesCount: number;
+  isSupported: boolean;
+  isComplete: boolean;
+  hasSufficientCoverage?: boolean;
+  unsupportedReasons?: string[];
+}
+
+export interface SourceScanCoverage {
+  totalSourceFilesDetected: number;
+  totalSourceFilesScanned: number;
+  languages: Record<string, SourceLanguageCoverage>;
+  unsupportedExtensions: string[];
+  unsupportedFileTypes?: string[];
+  canMakeNegativeUsageClaim?: boolean;
+}
+
 export interface DependencyScanResult {
   ecosystems: EcosystemType[];
   packageManagers: PackageManagerType[];
@@ -251,6 +285,7 @@ export interface DependencyScanResult {
   diagnostics: ManifestDiagnostic[];
   graph?: PackageDependencyGraph;
   sourceUsages?: Record<string, PackageSourceUsage[]>; // Keyed by packageId
+  coverage?: SourceScanCoverage;
   stats: {
     totalManifests: number;
     totalLockfiles: number;
@@ -294,6 +329,9 @@ export interface PackageDependencyNode {
   scope: DependencyScope;
   isDirect: boolean;
   isTransitive: boolean;
+  isWorkspace?: boolean;
+  parentPackages?: string[];
+  dependencies?: string[];
   manifestPath: string;
   lockfilePath?: string;
   workspacePath?: string;
@@ -370,7 +408,8 @@ export type DependencyHealthSignalKind =
   | 'conflict' // Range mismatch or workspace version conflict
   | 'duplicate' // Multiple versions present across workspaces
   | 'stale_disk' // Installed disk version disagrees with lockfile
-  | 'unreferenced'; // Declared in manifest but zero source usages found
+  | 'unreferenced' // Declared in manifest but zero source usages found in supported & covered source scan
+  | 'analysis_unavailable'; // Source usage analysis unavailable or unsupported for language
 
 export interface DependencyHealthSignal {
   kind: DependencyHealthSignalKind;
@@ -384,9 +423,11 @@ export interface DependencyHealthSignal {
 export interface DependencyHealthIndicator {
   status: 'healthy' | 'warning' | 'error' | 'unknown';
   signals: DependencyHealthSignal[];
+  isClean?: boolean;
   hasConflict: boolean;
   isUnreferenced: boolean;
   isUnlocked: boolean;
   isDuplicate: boolean;
+  coverageStatus?: 'covered' | 'partial' | 'unsupported' | 'unscanned';
 }
 

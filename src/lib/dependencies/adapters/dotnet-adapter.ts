@@ -72,6 +72,7 @@ export class DotnetAdapter implements EcosystemAdapter {
     context: AdapterParseContext
   ): AdapterParseResult {
     const dependencies: NormalizedDependency[] = [];
+    const directDepMap = new Map<string, NormalizedDependency>();
     const diagnostics: ManifestDiagnostic[] = [];
     const dir = getDirname(manifestFile.path);
     const workspacePath = dir === '.' ? undefined : dir;
@@ -129,8 +130,21 @@ export class DotnetAdapter implements EcosystemAdapter {
         const version = tag.attributes.version;
         if (!id) continue;
 
-        dependencies.push({
-          id: `dotnet:nuget:${id.toLowerCase()}@${manifestFile.path}`,
+        const depId = `dotnet:nuget:${id.toLowerCase()}@${manifestFile.path}`;
+        const existing = directDepMap.get(depId);
+        if (existing) {
+          existing.evidence.push({
+            sourceFilePath: manifestFile.path,
+            sourceKind: 'manifest',
+            evidenceKind: 'declared_only',
+            rawSpecifier: version,
+            resolvedVersion: version,
+          });
+          continue;
+        }
+
+        const dep: NormalizedDependency = {
+          id: depId,
           ecosystem: 'dotnet',
           packageManager: 'nuget',
           name: id,
@@ -150,7 +164,10 @@ export class DotnetAdapter implements EcosystemAdapter {
               resolvedVersion: version,
             },
           ],
-        });
+        };
+
+        directDepMap.set(depId, dep);
+        dependencies.push(dep);
       }
     } else {
       // SDK-style csproj / fsproj / vbproj: <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
@@ -182,8 +199,16 @@ export class DotnetAdapter implements EcosystemAdapter {
           });
         }
 
-        dependencies.push({
-          id: `dotnet:nuget:${id.toLowerCase()}@${manifestFile.path}`,
+        const depId = `dotnet:nuget:${id.toLowerCase()}@${manifestFile.path}`;
+        const existing = directDepMap.get(depId);
+        if (existing) {
+          existing.evidence.push(...evidence);
+          if (version && !existing.versionDeclared) existing.versionDeclared = version;
+          continue;
+        }
+
+        const dep: NormalizedDependency = {
+          id: depId,
           ecosystem: 'dotnet',
           packageManager: 'nuget',
           name: id,
@@ -196,7 +221,10 @@ export class DotnetAdapter implements EcosystemAdapter {
           lockfilePath: lockFile?.path,
           workspacePath,
           evidence,
-        });
+        };
+
+        directDepMap.set(depId, dep);
+        dependencies.push(dep);
       }
     }
 

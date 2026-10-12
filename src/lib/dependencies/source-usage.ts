@@ -2,13 +2,16 @@
  * Source-Code Usage Mapping Engine (GT-014)
  *
  * Connects third-party package dependencies to the source files and AST symbols
- * that import or reference them, with accurate source locations and explicit uncertainty.
+ * that import or reference them, with accurate source locations, explicit uncertainty,
+ * and robust source-analysis coverage tracking.
  * Browser-safe and zero external network runtime dependencies.
  */
 
 import {
   NormalizedDependency,
   PackageSourceUsage,
+  SourceScanCoverage,
+  EcosystemType,
 } from './types';
 import { TraceEntity } from '../types/trace';
 
@@ -17,6 +20,26 @@ export interface SourceUsageMapResult {
   usagesByFilePath: Record<string, PackageSourceUsage[]>;
   totalUsagesCount: number;
   unreferencedPackageIds: Set<string>;
+  coverage: SourceScanCoverage;
+}
+
+/**
+ * Determines whether the repository's source scan had sufficient coverage to make
+ * a negative usage claim ("Unreferenced") for a given ecosystem.
+ *
+ * Requirements:
+ * - Language must be actively supported by a static parser in Trace.
+ * - At least one source file of that language must have been scanned.
+ * - The scan must be complete (not unsupported or absent).
+ */
+export function canMakeNegativeUsageClaim(
+  ecosystem: EcosystemType,
+  coverage?: SourceScanCoverage
+): boolean {
+  if (!coverage) return false;
+  const langCov = coverage.languages[ecosystem];
+  if (!langCov) return false;
+  return langCov.isSupported && langCov.isComplete !== false && langCov.scannedFilesCount > 0;
 }
 
 /**
@@ -85,6 +108,105 @@ export function mapPackagesToSourceUsage(
     }
   }
 
+  // Initialize coverage tracking
+  const coverage: SourceScanCoverage = {
+    totalSourceFilesDetected: 0,
+    totalSourceFilesScanned: 0,
+    languages: {
+      javascript: {
+        ecosystem: 'javascript',
+        language: 'TypeScript / JavaScript',
+        detectedFilesCount: 0,
+        scannedFilesCount: 0,
+        isSupported: true,
+        isComplete: true,
+      },
+      python: {
+        ecosystem: 'python',
+        language: 'Python',
+        detectedFilesCount: 0,
+        scannedFilesCount: 0,
+        isSupported: true,
+        isComplete: true,
+      },
+      rust: {
+        ecosystem: 'rust',
+        language: 'Rust',
+        detectedFilesCount: 0,
+        scannedFilesCount: 0,
+        isSupported: true,
+        isComplete: true,
+      },
+      go: {
+        ecosystem: 'go',
+        language: 'Go',
+        detectedFilesCount: 0,
+        scannedFilesCount: 0,
+        isSupported: true,
+        isComplete: true,
+      },
+    },
+    unsupportedExtensions: [],
+  };
+
+  const supportedEcosystems = new Set(['javascript', 'python', 'rust', 'go']);
+  for (const dep of dependencies) {
+    if (!supportedEcosystems.has(dep.ecosystem) && !coverage.languages[dep.ecosystem]) {
+      coverage.languages[dep.ecosystem] = {
+        ecosystem: dep.ecosystem,
+        language: dep.ecosystem.toUpperCase(),
+        detectedFilesCount: 0,
+        scannedFilesCount: 0,
+        isSupported: false,
+        hasSufficientCoverage: false,
+        isComplete: false,
+      };
+    }
+  }
+
+  const unsupportedExtMap: Record<string, { ecosystem: EcosystemType; name: string }> = {
+    '.java': { ecosystem: 'unknown', name: 'Java' },
+    '.kt': { ecosystem: 'unknown', name: 'Kotlin' },
+    '.scala': { ecosystem: 'unknown', name: 'Scala' },
+    '.cs': { ecosystem: 'unknown', name: 'C# / .NET' },
+    '.fs': { ecosystem: 'unknown', name: 'F#' },
+    '.c': { ecosystem: 'unknown', name: 'C' },
+    '.cpp': { ecosystem: 'unknown', name: 'C++' },
+    '.cc': { ecosystem: 'unknown', name: 'C++' },
+    '.h': { ecosystem: 'unknown', name: 'C/C++ Header' },
+    '.hpp': { ecosystem: 'unknown', name: 'C++ Header' },
+    '.swift': { ecosystem: 'unknown', name: 'Swift' },
+    '.rb': { ecosystem: 'unknown', name: 'Ruby' },
+    '.php': { ecosystem: 'unknown', name: 'PHP' },
+    '.dart': { ecosystem: 'unknown', name: 'Dart' },
+  };
+
+  const seenUsageIds = new Set<string>();
+
+  function addUsage(usage: PackageSourceUsage) {
+    let finalId = usage.id;
+    if (seenUsageIds.has(finalId)) {
+      let counter = 2;
+      while (seenUsageIds.has(`${usage.id}#${counter}`)) {
+        counter++;
+      }
+      finalId = `${usage.id}#${counter}`;
+      usage = { ...usage, id: finalId };
+    }
+    seenUsageIds.add(finalId);
+
+    if (!usagesByPackageId[usage.packageId]) {
+      usagesByPackageId[usage.packageId] = [];
+    }
+    usagesByPackageId[usage.packageId].push(usage);
+
+    if (!usagesByFilePath[usage.filePath]) {
+      usagesByFilePath[usage.filePath] = [];
+    }
+    usagesByFilePath[usage.filePath].push(usage);
+    totalUsagesCount++;
+  }
+
   // Parse source files
   for (const [rawPath, file] of Object.entries(files)) {
     const filePath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
@@ -109,6 +231,31 @@ export function mapPackagesToSourceUsage(
       continue;
     }
 
+    const dotIdx = lowerPath.lastIndexOf('.');
+    const ext = dotIdx !== -1 ? lowerPath.substring(dotIdx) : '';
+
+    // Check unsupported languages
+    if (ext && unsupportedExtMap[ext]) {
+      coverage.totalSourceFilesDetected++;
+      if (!coverage.unsupportedExtensions.includes(ext)) {
+        coverage.unsupportedExtensions.push(ext);
+      }
+      const langName = unsupportedExtMap[ext].name;
+      if (!coverage.languages[langName]) {
+        coverage.languages[langName] = {
+          ecosystem: unsupportedExtMap[ext].ecosystem,
+          language: langName,
+          detectedFilesCount: 0,
+          scannedFilesCount: 0,
+          isSupported: false,
+          isComplete: false,
+          unsupportedReasons: [`Static import parser for ${langName} (${ext}) is not implemented.`],
+        };
+      }
+      coverage.languages[langName].detectedFilesCount++;
+      continue;
+    }
+
     const lines = file.content.split('\n');
 
     // 1. JavaScript / TypeScript Files
@@ -120,6 +267,11 @@ export function mapPackagesToSourceUsage(
       lowerPath.endsWith('.mjs') ||
       lowerPath.endsWith('.cjs')
     ) {
+      coverage.totalSourceFilesDetected++;
+      coverage.totalSourceFilesScanned++;
+      coverage.languages.javascript.detectedFilesCount++;
+      coverage.languages.javascript.scannedFilesCount++;
+
       scanJavaScriptSource(
         filePath,
         lines,
@@ -131,6 +283,11 @@ export function mapPackagesToSourceUsage(
 
     // 2. Python Files
     else if (lowerPath.endsWith('.py')) {
+      coverage.totalSourceFilesDetected++;
+      coverage.totalSourceFilesScanned++;
+      coverage.languages.python.detectedFilesCount++;
+      coverage.languages.python.scannedFilesCount++;
+
       scanPythonSource(
         filePath,
         lines,
@@ -142,6 +299,11 @@ export function mapPackagesToSourceUsage(
 
     // 3. Rust Files
     else if (lowerPath.endsWith('.rs')) {
+      coverage.totalSourceFilesDetected++;
+      coverage.totalSourceFilesScanned++;
+      coverage.languages.rust.detectedFilesCount++;
+      coverage.languages.rust.scannedFilesCount++;
+
       scanRustSource(
         filePath,
         lines,
@@ -153,6 +315,11 @@ export function mapPackagesToSourceUsage(
 
     // 4. Go Files
     else if (lowerPath.endsWith('.go')) {
+      coverage.totalSourceFilesDetected++;
+      coverage.totalSourceFilesScanned++;
+      coverage.languages.go.detectedFilesCount++;
+      coverage.languages.go.scannedFilesCount++;
+
       scanGoSource(
         filePath,
         lines,
@@ -163,37 +330,33 @@ export function mapPackagesToSourceUsage(
     }
   }
 
-  function addUsage(usage: PackageSourceUsage) {
-    if (!usagesByPackageId[usage.packageId]) {
-      usagesByPackageId[usage.packageId] = [];
-    }
-    usagesByPackageId[usage.packageId].push(usage);
-
-    if (!usagesByFilePath[usage.filePath]) {
-      usagesByFilePath[usage.filePath] = [];
-    }
-    usagesByFilePath[usage.filePath].push(usage);
-    totalUsagesCount++;
-  }
-
-  // Identify direct packages with zero source usages (unreferenced)
+  // Identify direct packages with zero source usages (unreferenced) ONLY when coverage allows negative claim
   const unreferencedPackageIds = new Set<string>();
   for (const dep of dependencies) {
-    if (dep.isDirect && (!usagesByPackageId[dep.id] || usagesByPackageId[dep.id].length === 0)) {
+    const hasNoUsages = !usagesByPackageId[dep.id] || usagesByPackageId[dep.id].length === 0;
+    if (dep.isDirect && hasNoUsages && canMakeNegativeUsageClaim(dep.ecosystem, coverage)) {
       unreferencedPackageIds.add(dep.id);
     }
   }
+
+  coverage.canMakeNegativeUsageClaim =
+    canMakeNegativeUsageClaim('javascript', coverage) ||
+    canMakeNegativeUsageClaim('python', coverage) ||
+    canMakeNegativeUsageClaim('rust', coverage) ||
+    canMakeNegativeUsageClaim('go', coverage);
 
   return {
     usagesByPackageId,
     usagesByFilePath,
     totalUsagesCount,
     unreferencedPackageIds,
+    coverage,
   };
 }
 
 /**
  * Scans JavaScript / TypeScript source lines for ES imports, requires, and dynamic imports.
+ * Accurately tracks multiline imports and ignores imports appearing inside multiline comments.
  */
 function scanJavaScriptSource(
   filePath: string,
@@ -202,98 +365,84 @@ function scanJavaScriptSource(
   fileEntities: TraceEntity[],
   onUsage: (u: PackageSourceUsage) => void
 ) {
+  let inBlockComment = false;
+  let multilineImportBuffer: { startLine: number; fullText: string; rawSnippet: string } | null = null;
+
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
-    const line = lines[i];
-    const trimmed = line.trim();
+    let lineText = lines[i];
 
-    if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
-
-    // A. Static ES Import:
-    // e.g. import React, { useState } from 'react';
-    // or import * as React from 'react';
-    // or import express from 'express';
-    // or import 'react';
-    const fromMatch = trimmed.match(/^import\s+(?:type\s+)?(.+?)\s+from\s+['"]([^'"]+)['"]/);
-    const bareMatch = trimmed.match(/^import\s+['"]([^'"]+)['"]/);
-
-    if (fromMatch || bareMatch) {
-      const sourceModule = fromMatch ? fromMatch[2] : bareMatch![1];
-      const importClause = fromMatch ? fromMatch[1].trim() : '';
-
-      if (sourceModule && !sourceModule.startsWith('.') && !sourceModule.startsWith('/')) {
-        let symbols: { importedSymbol?: string; localAlias?: string } = { importedSymbol: 'default' };
-
-        if (importClause) {
-          // Namespace: * as foo
-          const nsMatch = importClause.match(/\*\s+as\s+(\w+)/);
-          if (nsMatch) {
-            symbols = { importedSymbol: '*', localAlias: nsMatch[1] };
-          } else {
-            // Named imports: { foo, bar as baz }
-            const namedMatch = importClause.match(/\{([^}]+)\}/);
-            if (namedMatch) {
-              const raw = namedMatch[1].trim();
-              const firstPart = raw.split(',')[0].trim();
-              const asParts = firstPart.split(/\s+as\s+/);
-              if (asParts.length === 2) {
-                symbols = { importedSymbol: asParts[0].trim(), localAlias: asParts[1].trim() };
-              } else {
-                symbols = { importedSymbol: firstPart, localAlias: firstPart };
-              }
-            } else {
-              // Default import only
-              const defaultPart = importClause.split(',')[0].trim();
-              if (defaultPart) {
-                symbols = { importedSymbol: 'default', localAlias: defaultPart };
-              }
-            }
-          }
-        }
-
-        matchAndEmitUsage(
-          filePath,
-          lineNum,
-          line,
-          sourceModule,
-          'static_import',
-          jsCandidates,
-          fileEntities,
-          onUsage,
-          symbols
-        );
+    // Handle multiline /* ... */ comments
+    if (inBlockComment) {
+      const closeIdx = lineText.indexOf('*/');
+      if (closeIdx === -1) {
         continue;
+      }
+      lineText = lineText.substring(closeIdx + 2);
+      inBlockComment = false;
+    }
+
+    while (lineText.includes('/*')) {
+      const openIdx = lineText.indexOf('/*');
+      const closeIdx = lineText.indexOf('*/', openIdx + 2);
+      if (closeIdx === -1) {
+        lineText = lineText.substring(0, openIdx);
+        inBlockComment = true;
+        break;
+      } else {
+        lineText = lineText.substring(0, openIdx) + ' ' + lineText.substring(closeIdx + 2);
       }
     }
 
-    // B. CommonJS require: const x = require('pkg') or require('pkg/sub')
-    const requireMatch = trimmed.match(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+    // Strip single-line // comments
+    const codePart = lineText.replace(/\/\/.*$/, '').trim();
+
+    // Check multiline ES import accumulation
+    if (multilineImportBuffer) {
+      multilineImportBuffer.fullText += ' ' + codePart;
+      multilineImportBuffer.rawSnippet += '\n' + lines[i];
+
+      if (codePart.includes('from ') || codePart.includes(';') || (codePart.includes('from') && /['"]/.test(codePart))) {
+        processJsImportClause(
+          filePath,
+          multilineImportBuffer.startLine,
+          multilineImportBuffer.rawSnippet,
+          multilineImportBuffer.fullText,
+          jsCandidates,
+          fileEntities,
+          onUsage
+        );
+        multilineImportBuffer = null;
+      }
+      continue;
+    }
+
+    if (!codePart) continue;
+
+    // Check start of multiline import: e.g. "import {" or "import type {" without inline "from"
+    if (codePart.startsWith('import ') && !codePart.includes('from ') && (codePart.includes('{') || codePart.includes('('))) {
+      multilineImportBuffer = {
+        startLine: lineNum,
+        fullText: codePart,
+        rawSnippet: lines[i],
+      };
+      continue;
+    }
+
+    // Single-line ES import
+    if (codePart.startsWith('import ') || codePart.startsWith('import(')) {
+      processJsImportClause(filePath, lineNum, lines[i], codePart, jsCandidates, fileEntities, onUsage);
+    }
+
+    // CommonJS require: const x = require('pkg')
+    const requireMatch = codePart.match(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
     if (requireMatch) {
       const sourceModule = requireMatch[1];
       if (sourceModule && !sourceModule.startsWith('.') && !sourceModule.startsWith('/')) {
         matchAndEmitUsage(
           filePath,
           lineNum,
-          line,
-          sourceModule,
-          'dynamic_require',
-          jsCandidates,
-          fileEntities,
-          onUsage
-        );
-        continue;
-      }
-    }
-
-    // C. Dynamic import(): import('pkg')
-    const dynamicImportMatch = trimmed.match(/import\s*\(\s*['"]([^'"]+)['"]\s*\)/);
-    if (dynamicImportMatch) {
-      const sourceModule = dynamicImportMatch[1];
-      if (sourceModule && !sourceModule.startsWith('.') && !sourceModule.startsWith('/')) {
-        matchAndEmitUsage(
-          filePath,
-          lineNum,
-          line,
+          lines[i],
           sourceModule,
           'dynamic_require',
           jsCandidates,
@@ -305,8 +454,83 @@ function scanJavaScriptSource(
   }
 }
 
+function processJsImportClause(
+  filePath: string,
+  lineNum: number,
+  snippet: string,
+  fullText: string,
+  jsCandidates: Array<{ dep: NormalizedDependency; exactKeys: string[]; prefixKeys: string[] }>,
+  fileEntities: TraceEntity[],
+  onUsage: (u: PackageSourceUsage) => void
+) {
+  // A. Static ES Import with "from":
+  // e.g. import React, { useState } from 'react';
+  const fromMatch = fullText.match(/^import\s+(?:type\s+)?(.+?)\s+from\s+['"]([^'"]+)['"]/);
+  const bareMatch = fullText.match(/^import\s+['"]([^'"]+)['"]/);
+  const dynamicMatch = fullText.match(/import\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+
+  if (fromMatch || bareMatch) {
+    const sourceModule = fromMatch ? fromMatch[2] : bareMatch![1];
+    const importClause = fromMatch ? fromMatch[1].trim() : '';
+
+    if (sourceModule && !sourceModule.startsWith('.') && !sourceModule.startsWith('/')) {
+      let symbols: { importedSymbol?: string; localAlias?: string } = { importedSymbol: 'default' };
+
+      if (importClause) {
+        const nsMatch = importClause.match(/\*\s+as\s+(\w+)/);
+        if (nsMatch) {
+          symbols = { importedSymbol: '*', localAlias: nsMatch[1] };
+        } else {
+          const namedMatch = importClause.match(/\{([^}]+)\}/);
+          if (namedMatch) {
+            const raw = namedMatch[1].trim();
+            const firstPart = raw.split(',')[0].trim();
+            const asParts = firstPart.split(/\s+as\s+/);
+            if (asParts.length === 2) {
+              symbols = { importedSymbol: asParts[0].trim(), localAlias: asParts[1].trim() };
+            } else {
+              symbols = { importedSymbol: firstPart, localAlias: firstPart };
+            }
+          } else {
+            const defaultPart = importClause.split(',')[0].trim();
+            if (defaultPart) {
+              symbols = { importedSymbol: 'default', localAlias: defaultPart };
+            }
+          }
+        }
+      }
+
+      matchAndEmitUsage(
+        filePath,
+        lineNum,
+        snippet,
+        sourceModule,
+        'static_import',
+        jsCandidates,
+        fileEntities,
+        onUsage,
+        symbols
+      );
+    }
+  } else if (dynamicMatch) {
+    const sourceModule = dynamicMatch[1];
+    if (sourceModule && !sourceModule.startsWith('.') && !sourceModule.startsWith('/')) {
+      matchAndEmitUsage(
+        filePath,
+        lineNum,
+        snippet,
+        sourceModule,
+        'dynamic_require',
+        jsCandidates,
+        fileEntities,
+        onUsage
+      );
+    }
+  }
+}
+
 /**
- * Scans Python source lines for imports.
+ * Scans Python source lines for imports, ignoring docstrings and handling multiline imports.
  */
 function scanPythonSource(
   filePath: string,
@@ -315,22 +539,79 @@ function scanPythonSource(
   fileEntities: TraceEntity[],
   onUsage: (u: PackageSourceUsage) => void
 ) {
+  let inTripleQuote: '"""' | "'''" | null = null;
+  let multilinePyBuffer: { startLine: number; module: string; rawSnippet: string } | null = null;
+
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
-    const line = lines[i];
-    const trimmed = line.trim();
+    let lineText = lines[i];
 
-    if (!trimmed || trimmed.startsWith('#')) continue;
+    // Handle triple quotes
+    if (inTripleQuote) {
+      const closeIdx = lineText.indexOf(inTripleQuote);
+      if (closeIdx === -1) {
+        continue;
+      }
+      lineText = lineText.substring(closeIdx + 3);
+      inTripleQuote = null;
+    }
 
-    // from pkg.sub import x, y as z
-    const fromMatch = trimmed.match(/^from\s+([a-zA-Z0-9_.]+)\s+import\s+([^#]+)/);
+    while (lineText.includes('"""') || lineText.includes("'''")) {
+      const target = lineText.includes('"""') ? '"""' : "'''";
+      const openIdx = lineText.indexOf(target);
+      const closeIdx = lineText.indexOf(target, openIdx + 3);
+      if (closeIdx === -1) {
+        lineText = lineText.substring(0, openIdx);
+        inTripleQuote = target;
+        break;
+      } else {
+        lineText = lineText.substring(0, openIdx) + ' ' + lineText.substring(closeIdx + 3);
+      }
+    }
+
+    // Strip Python line comment
+    const codePart = lineText.replace(/#.*$/, '').trim();
+
+    if (multilinePyBuffer) {
+      multilinePyBuffer.rawSnippet += '\n' + lines[i];
+      if (codePart.includes(')')) {
+        matchAndEmitUsage(
+          filePath,
+          multilinePyBuffer.startLine,
+          multilinePyBuffer.rawSnippet,
+          multilinePyBuffer.module,
+          'static_import',
+          pyCandidates,
+          fileEntities,
+          onUsage
+        );
+        multilinePyBuffer = null;
+      }
+      continue;
+    }
+
+    if (!codePart) continue;
+
+    // Multiline "from module import ("
+    const multiFromMatch = codePart.match(/^from\s+([a-zA-Z0-9_.]+)\s+import\s*\(/);
+    if (multiFromMatch) {
+      multilinePyBuffer = {
+        startLine: lineNum,
+        module: multiFromMatch[1],
+        rawSnippet: lines[i],
+      };
+      continue;
+    }
+
+    // Single-line from ... import ...
+    const fromMatch = codePart.match(/^from\s+([a-zA-Z0-9_.]+)\s+import\s+([^#]+)/);
     if (fromMatch) {
       const sourceModule = fromMatch[1];
       const imported = fromMatch[2].split(',')[0].trim();
       matchAndEmitUsage(
         filePath,
         lineNum,
-        line,
+        lines[i],
         sourceModule,
         'static_import',
         pyCandidates,
@@ -342,14 +623,14 @@ function scanPythonSource(
     }
 
     // import pkg, pkg.sub as alias
-    const importMatch = trimmed.match(/^import\s+([a-zA-Z0-9_.]+)(?:\s+as\s+([a-zA-Z0-9_]+))?/);
+    const importMatch = codePart.match(/^import\s+([a-zA-Z0-9_.]+)(?:\s+as\s+([a-zA-Z0-9_]+))?/);
     if (importMatch) {
       const sourceModule = importMatch[1];
       const alias = importMatch[2];
       matchAndEmitUsage(
         filePath,
         lineNum,
-        line,
+        lines[i],
         sourceModule,
         'static_import',
         pyCandidates,
@@ -371,14 +652,35 @@ function scanRustSource(
   fileEntities: TraceEntity[],
   onUsage: (u: PackageSourceUsage) => void
 ) {
+  let inBlockComment = false;
+
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
-    const line = lines[i];
-    const trimmed = line.trim();
+    let lineText = lines[i];
 
-    if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
+    if (inBlockComment) {
+      const closeIdx = lineText.indexOf('*/');
+      if (closeIdx === -1) continue;
+      lineText = lineText.substring(closeIdx + 2);
+      inBlockComment = false;
+    }
 
-    const useMatch = trimmed.match(/^use\s+([a-zA-Z0-9_]+)(?:::([^;]+))?/);
+    while (lineText.includes('/*')) {
+      const openIdx = lineText.indexOf('/*');
+      const closeIdx = lineText.indexOf('*/', openIdx + 2);
+      if (closeIdx === -1) {
+        lineText = lineText.substring(0, openIdx);
+        inBlockComment = true;
+        break;
+      } else {
+        lineText = lineText.substring(0, openIdx) + ' ' + lineText.substring(closeIdx + 2);
+      }
+    }
+
+    const codePart = lineText.replace(/\/\/.*$/, '').trim();
+    if (!codePart) continue;
+
+    const useMatch = codePart.match(/^use\s+([a-zA-Z0-9_]+)(?:::([^;]+))?/);
     if (useMatch) {
       const crateName = useMatch[1];
       // Skip standard library prefixes
@@ -388,7 +690,7 @@ function scanRustSource(
       matchAndEmitUsage(
         filePath,
         lineNum,
-        line,
+        lines[i],
         crateName,
         'static_import',
         rustCandidates,
@@ -399,12 +701,12 @@ function scanRustSource(
       continue;
     }
 
-    const externMatch = trimmed.match(/^extern\s+crate\s+([a-zA-Z0-9_]+);/);
+    const externMatch = codePart.match(/^extern\s+crate\s+([a-zA-Z0-9_]+);/);
     if (externMatch) {
       matchAndEmitUsage(
         filePath,
         lineNum,
-        line,
+        lines[i],
         externMatch[1],
         'static_import',
         rustCandidates,
@@ -426,29 +728,49 @@ function scanGoSource(
   onUsage: (u: PackageSourceUsage) => void
 ) {
   let inImportBlock = false;
+  let inBlockComment = false;
 
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
-    const line = lines[i];
-    const trimmed = line.trim();
+    let lineText = lines[i];
 
-    if (!trimmed || trimmed.startsWith('//')) continue;
+    if (inBlockComment) {
+      const closeIdx = lineText.indexOf('*/');
+      if (closeIdx === -1) continue;
+      lineText = lineText.substring(closeIdx + 2);
+      inBlockComment = false;
+    }
 
-    if (trimmed === 'import (') {
+    while (lineText.includes('/*')) {
+      const openIdx = lineText.indexOf('/*');
+      const closeIdx = lineText.indexOf('*/', openIdx + 2);
+      if (closeIdx === -1) {
+        lineText = lineText.substring(0, openIdx);
+        inBlockComment = true;
+        break;
+      } else {
+        lineText = lineText.substring(0, openIdx) + ' ' + lineText.substring(closeIdx + 2);
+      }
+    }
+
+    const codePart = lineText.replace(/\/\/.*$/, '').trim();
+    if (!codePart) continue;
+
+    if (codePart === 'import (') {
       inImportBlock = true;
       continue;
     }
-    if (inImportBlock && trimmed === ')') {
+    if (inImportBlock && codePart === ')') {
       inImportBlock = false;
       continue;
     }
 
     let importPath = '';
     if (inImportBlock) {
-      const match = trimmed.match(/(?:[a-zA-Z0-9_]+\s+)?["']([^"']+)["']/);
+      const match = codePart.match(/(?:[a-zA-Z0-9_]+\s+)?["']([^"']+)["']/);
       if (match) importPath = match[1];
     } else {
-      const match = trimmed.match(/^import\s+(?:[a-zA-Z0-9_]+\s+)?["']([^"']+)["']/);
+      const match = codePart.match(/^import\s+(?:[a-zA-Z0-9_]+\s+)?["']([^"']+)["']/);
       if (match) importPath = match[1];
     }
 
@@ -456,7 +778,7 @@ function scanGoSource(
       matchAndEmitUsage(
         filePath,
         lineNum,
-        line,
+        lines[i],
         importPath,
         'static_import',
         goCandidates,
@@ -488,7 +810,6 @@ function matchAndEmitUsage(
     const isSubpath = !isExact && prefixKeys.some((p) => lowerSpec.startsWith(p));
 
     if (isExact || isSubpath) {
-      // Find enclosing entity if the import falls inside a function/component or directly precedes it
       const enclosing = fileEntities.find(
         (e) => e.location.startLine <= lineNum && e.location.endLine >= lineNum
       );
@@ -499,8 +820,9 @@ function matchAndEmitUsage(
         ? 'uncertain_alias'
         : confidence;
 
+      const symbolSuffix = symbols?.importedSymbol ? `:${symbols.importedSymbol}` : '';
       const usage: PackageSourceUsage = {
-        id: `${dep.id}#usage#${filePath}:${lineNum}`,
+        id: `${dep.id}#usage#${filePath}:${lineNum}${symbolSuffix}`,
         packageId: dep.id,
         packageName: dep.name,
         ecosystem: dep.ecosystem,

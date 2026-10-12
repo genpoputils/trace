@@ -23,6 +23,8 @@ import {
   compareSemver,
   isExactVersionPin,
   satisfiesVersionRange,
+  buildDependencyProvenance,
+  evaluateDependencyHealth,
 } from '../src/lib/dependencies';
 
 describe('GT-012: Dependency Version Provenance Engine', () => {
@@ -596,6 +598,123 @@ github.com/gin-gonic/gin v1.9.1/go.mod h1:1q8j0x5+/2=
       const conflict = unlocked.provenance?.conflicts.find((c) => c.kind === 'missing_lockfile_resolution');
       assert.ok(conflict, 'Detected missing_lockfile_resolution');
       assert.strictEqual(conflict.severity, 'warning');
+    });
+  });
+
+  describe('Issue #8: Conservative Semver and Range Evaluation Regression Suite', () => {
+    test('Strict SemVer parsing rejects malformed versions and trailing characters', () => {
+      assert.strictEqual(parseSemver('1.2.3.4'), null);
+      assert.strictEqual(parseSemver('1.2.3abc'), null);
+      assert.strictEqual(parseSemver('1.2.3-alpha+build trailing-garbage'), null);
+      assert.strictEqual(parseSemver('1.2.3/foo'), null);
+      assert.strictEqual(parseSemver('not-a-version'), null);
+      assert.strictEqual(parseSemver(''), null);
+    });
+
+    test('SemVer 2.0.0 rule 11 prerelease precedence evaluation', () => {
+      // Normal version has higher precedence than prerelease
+      assert.strictEqual(compareSemver('1.0.0', '1.0.0-alpha'), 1);
+      assert.strictEqual(compareSemver('1.0.0-alpha', '1.0.0'), -1);
+
+      // Prerelease identifier comparisons
+      assert.strictEqual(compareSemver('1.0.0-alpha', '1.0.0-alpha.1'), -1);
+      assert.strictEqual(compareSemver('1.0.0-alpha.1', '1.0.0-alpha.beta'), -1);
+      assert.strictEqual(compareSemver('1.0.0-alpha.beta', '1.0.0-beta'), -1);
+      assert.strictEqual(compareSemver('1.0.0-beta', '1.0.0-beta.2'), -1);
+      assert.strictEqual(compareSemver('1.0.0-beta.2', '1.0.0-beta.11'), -1);
+      assert.strictEqual(compareSemver('1.0.0-beta.11', '1.0.0-rc.1'), -1);
+      assert.strictEqual(compareSemver('1.0.0-rc.1', '1.0.0'), -1);
+
+      // Prerelease versions do not satisfy normal range
+      const res = satisfiesVersionRange('1.0.0-alpha.1', '^1.0.0');
+      assert.strictEqual(res.satisfies, false);
+      assert.strictEqual(res.status, 'not_satisfied');
+    });
+
+    test('Zero-major semantic version range boundaries', () => {
+      // 0.X.Y: minor version bumps are breaking in SemVer
+      assert.strictEqual(satisfiesVersionRange('0.2.1', '^0.2.0').satisfies, true);
+      assert.strictEqual(satisfiesVersionRange('0.2.5', '^0.2.0').satisfies, true);
+      assert.strictEqual(satisfiesVersionRange('0.3.0', '^0.2.0').satisfies, false);
+      assert.strictEqual(satisfiesVersionRange('0.1.9', '^0.2.0').satisfies, false);
+
+      // 0.0.X: patch version bumps are breaking in SemVer
+      assert.strictEqual(satisfiesVersionRange('0.0.3', '^0.0.3').satisfies, true);
+      assert.strictEqual(satisfiesVersionRange('0.0.4', '^0.0.3').satisfies, false);
+    });
+
+    test('Workspace, local path, git URLs, and registry tags return status unknown', () => {
+      const ws1 = satisfiesVersionRange('1.0.0', 'workspace:*');
+      assert.strictEqual(ws1.status, 'unknown');
+      assert.strictEqual(ws1.satisfies, false);
+
+      const ws2 = satisfiesVersionRange('1.0.0', 'workspace:^1.0.0');
+      assert.strictEqual(ws2.status, 'unknown');
+
+      const fileSpec = satisfiesVersionRange('1.0.0', 'file:../my-package');
+      assert.strictEqual(fileSpec.status, 'unknown');
+      assert.strictEqual(fileSpec.satisfies, false);
+
+      const linkSpec = satisfiesVersionRange('1.0.0', 'link:../my-package');
+      assert.strictEqual(linkSpec.status, 'unknown');
+
+      const gitSpec = satisfiesVersionRange('1.0.0', 'git+https://github.com/org/repo.git#main');
+      assert.strictEqual(gitSpec.status, 'unknown');
+
+      const tagSpec = satisfiesVersionRange('1.0.0', 'latest');
+      assert.strictEqual(tagSpec.status, 'satisfied'); // latest is valid wildcard alias
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'next').status, 'unknown');
+      assert.strictEqual(satisfiesVersionRange('1.0.0', 'beta').status, 'unknown');
+    });
+
+    test('Malformed, unsupported, or ambiguous specifications never default to satisfied', () => {
+      const malformed1 = satisfiesVersionRange('1.0.0', '^1.2.3abc');
+      assert.strictEqual(malformed1.status, 'unknown');
+      assert.strictEqual(malformed1.satisfies, false);
+
+      const malformed2 = satisfiesVersionRange('1.0.0', '>=1.0.0 ?? 2.0.0');
+      assert.strictEqual(malformed2.status, 'unknown');
+      assert.strictEqual(malformed2.satisfies, false);
+
+      const malformed3 = satisfiesVersionRange('1.0.0', 'some_random_string');
+      assert.strictEqual(malformed3.status, 'unknown');
+      assert.strictEqual(malformed3.satisfies, false);
+    });
+
+    test('Unknown constraints cannot appear as verified clean', () => {
+      const prov = buildDependencyProvenance({
+        name: 'internal-ui',
+        ecosystem: 'javascript',
+        packageManager: 'pnpm',
+        manifestPath: 'packages/app/package.json',
+        lockfilePath: 'pnpm-lock.yaml',
+        declaredSpecifier: 'workspace:*',
+        resolvedVersion: '1.0.0',
+        isDirect: true,
+      });
+
+      // Resolved status and overall status are incomplete due to non-standard range constraint
+      assert.strictEqual(prov.resolved.status, 'incomplete');
+      assert.strictEqual(prov.satisfiesRange, undefined);
+      assert.strictEqual(prov.status, 'incomplete');
+
+      const health = evaluateDependencyHealth({
+        id: 'pkg-1',
+        name: 'internal-ui',
+        ecosystem: 'javascript',
+        packageManager: 'pnpm',
+        versionDeclared: 'workspace:*',
+        versionResolved: '1.0.0',
+        scope: 'runtime',
+        isDirect: true,
+        isTransitive: false,
+        manifestPath: 'packages/app/package.json',
+        lockfilePath: 'pnpm-lock.yaml',
+        provenance: prov,
+        evidence: [],
+      });
+
+      assert.strictEqual(health.isClean, false);
     });
   });
 });

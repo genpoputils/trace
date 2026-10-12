@@ -233,9 +233,20 @@ export class JavaScriptAdapter implements EcosystemAdapter {
       { key: 'optionalDependencies', scope: 'optional' },
     ];
 
+    const scopePrecedence: Record<DependencyScope, number> = {
+      runtime: 4,
+      build: 3,
+      peer: 2,
+      dev: 1,
+      optional: 0,
+      bundled: 0,
+      test: 0,
+      unknown: 0,
+    };
+
     const declaredMap = new Map<
       string,
-      { rawSpecifier: string; scope: DependencyScope }
+      { rawSpecifier: string; scope: DependencyScope; extraEvidence?: DependencyEvidence[] }
     >();
 
     for (const { key, scope } of depScopes) {
@@ -243,7 +254,22 @@ export class JavaScriptAdapter implements EcosystemAdapter {
       if (section && typeof section === 'object') {
         for (const [depName, rawSpec] of Object.entries(section)) {
           if (typeof rawSpec === 'string') {
-            declaredMap.set(depName, { rawSpecifier: rawSpec, scope });
+            const existing = declaredMap.get(depName);
+            if (existing) {
+              if (scopePrecedence[scope] > scopePrecedence[existing.scope]) {
+                existing.scope = scope;
+                existing.rawSpecifier = rawSpec;
+              }
+              if (!existing.extraEvidence) existing.extraEvidence = [];
+              existing.extraEvidence.push({
+                sourceFilePath: manifestFile.path,
+                sourceKind: 'manifest',
+                evidenceKind: 'declared_only',
+                rawSpecifier: rawSpec,
+              });
+            } else {
+              declaredMap.set(depName, { rawSpecifier: rawSpec, scope });
+            }
           }
         }
       }
@@ -257,6 +283,8 @@ export class JavaScriptAdapter implements EcosystemAdapter {
         integrity?: string;
         resolvedUrl?: string;
         isDirect?: boolean;
+        dependencies?: string[];
+        parentPackages?: string[];
       }
     >();
 
@@ -315,6 +343,10 @@ export class JavaScriptAdapter implements EcosystemAdapter {
           rawSpecifier,
         },
       ];
+
+      if (declaredMap.get(depName)?.extraEvidence) {
+        evidence.push(...declaredMap.get(depName)!.extraEvidence!);
+      }
 
       if (resolved && lockfilePath) {
         evidence.push({
@@ -377,6 +409,8 @@ export class JavaScriptAdapter implements EcosystemAdapter {
         scope,
         isDirect: true,
         isTransitive: false,
+        parentPackages: resolved?.parentPackages,
+        dependencies: resolved?.dependencies,
         manifestPath: manifestFile.path,
         lockfilePath,
         workspacePath,
@@ -437,6 +471,8 @@ export class JavaScriptAdapter implements EcosystemAdapter {
             scope: 'runtime',
             isDirect: false,
             isTransitive: true,
+            parentPackages: resolved.parentPackages,
+            dependencies: resolved.dependencies,
             manifestPath: manifestFile.path,
             lockfilePath,
             workspacePath,
@@ -458,12 +494,23 @@ export class JavaScriptAdapter implements EcosystemAdapter {
 
   private parsePackageLock(
     content: string,
-    resolvedMap: Map<string, { resolvedVersion: string; integrity?: string; resolvedUrl?: string }>,
+    resolvedMap: Map<
+      string,
+      {
+        resolvedVersion: string;
+        integrity?: string;
+        resolvedUrl?: string;
+        dependencies?: string[];
+        parentPackages?: string[];
+      }
+    >,
     diagnostics: ManifestDiagnostic[],
     lockfilePath: string
   ): void {
     try {
       const lockObj = JSON.parse(content);
+      const packageParents = new Map<string, string[]>();
+
       // v2 / v3 format: "packages"
       if (lockObj.packages && typeof lockObj.packages === 'object') {
         for (const [pkgPath, pkgInfo] of Object.entries(lockObj.packages)) {
@@ -478,29 +525,63 @@ export class JavaScriptAdapter implements EcosystemAdapter {
           const pkgInfoRec = pkgInfo as Record<string, unknown>;
           const version = pkgInfoRec.version;
           if (version && typeof version === 'string') {
+            const childDeps: string[] = [];
+            if (pkgInfoRec.dependencies && typeof pkgInfoRec.dependencies === 'object') {
+              for (const childName of Object.keys(pkgInfoRec.dependencies as Record<string, unknown>)) {
+                childDeps.push(childName);
+                const parents = packageParents.get(childName) || [];
+                if (!parents.includes(pkgName)) parents.push(pkgName);
+                packageParents.set(childName, parents);
+              }
+            }
+
             resolvedMap.set(pkgName, {
               resolvedVersion: version,
               integrity: pkgInfoRec.integrity ? String(pkgInfoRec.integrity) : undefined,
               resolvedUrl: pkgInfoRec.resolved ? String(pkgInfoRec.resolved) : undefined,
+              dependencies: childDeps,
+              parentPackages: packageParents.get(pkgName) || [],
             });
+          }
+        }
+
+        // Backfill parent packages registered after entry was added
+        for (const [pkgName, parents] of packageParents.entries()) {
+          const item = resolvedMap.get(pkgName);
+          if (item) {
+            item.parentPackages = parents;
           }
         }
       } else if (lockObj.dependencies && typeof lockObj.dependencies === 'object') {
         // v1 format: "dependencies"
-        const traverseV1 = (deps: Record<string, unknown>) => {
+        const traverseV1 = (deps: Record<string, unknown>, parentName?: string) => {
           for (const [name, info] of Object.entries(deps)) {
             if (info && typeof info === 'object') {
               const infoRec = info as Record<string, unknown>;
               if (typeof infoRec.version === 'string') {
+                if (parentName) {
+                  const parents = packageParents.get(name) || [];
+                  if (!parents.includes(parentName)) parents.push(parentName);
+                  packageParents.set(name, parents);
+                }
+
                 if (!resolvedMap.has(name)) {
                   resolvedMap.set(name, {
                     resolvedVersion: infoRec.version,
                     integrity: infoRec.integrity ? String(infoRec.integrity) : undefined,
                     resolvedUrl: infoRec.resolved ? String(infoRec.resolved) : undefined,
+                    parentPackages: parentName ? [parentName] : [],
                   });
+                } else if (parentName) {
+                  const existing = resolvedMap.get(name)!;
+                  if (!existing.parentPackages) existing.parentPackages = [];
+                  if (!existing.parentPackages.includes(parentName)) {
+                    existing.parentPackages.push(parentName);
+                  }
                 }
+
                 if (infoRec.dependencies && typeof infoRec.dependencies === 'object') {
-                  traverseV1(infoRec.dependencies as Record<string, unknown>);
+                  traverseV1(infoRec.dependencies as Record<string, unknown>, name);
                 }
               }
             }

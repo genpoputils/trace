@@ -20,7 +20,10 @@ import {
   getStablePackageId,
   mapPackagesToSourceUsage,
   evaluateDependencyHealth,
+  reconcileWorkspaceProvenance,
+  canMakeNegativeUsageClaim,
   NormalizedDependency,
+  SourceScanCoverage,
 } from '../src/lib/dependencies';
 import { TraceEntity } from '../src/lib/types/trace';
 import { CodebaseAnalyzer } from '../src/lib/analyzer/codebase-analyzer';
@@ -141,6 +144,7 @@ describe('GT-013: Typed Package Dependency Graph Engine', () => {
       scope: 'runtime',
       isDirect: false,
       isTransitive: true,
+      parentPackages: ['express'],
       manifestPath: 'package.json',
       lockfilePath: 'package-lock.json',
       evidence: [],
@@ -199,6 +203,7 @@ describe('GT-013: Typed Package Dependency Graph Engine', () => {
       scope: 'runtime',
       isDirect: false,
       isTransitive: true,
+      parentPackages: ['next'],
       manifestPath: 'package.json',
       evidence: [],
     };
@@ -626,7 +631,7 @@ describe('GT-016: Dependency Health Indicators and Evidence Audit', () => {
     assert.ok(health.signals.some((s) => s.kind === 'conflict'));
   });
 
-  test('Flags unreferenced status when direct package has zero source imports', () => {
+  test('Flags unreferenced status when direct package has zero source imports in covered scan', () => {
     const directDep: NormalizedDependency = {
       id: 'unref-dep',
       name: 'rimraf',
@@ -642,7 +647,25 @@ describe('GT-016: Dependency Health Indicators and Evidence Audit', () => {
       evidence: [],
     };
 
-    const health = evaluateDependencyHealth(directDep, []);
+    const coverage = {
+      totalSourceFilesDetected: 5,
+      totalSourceFilesScanned: 5,
+      languages: {
+        javascript: {
+          ecosystem: 'javascript' as const,
+          language: 'typescript',
+          detectedFilesCount: 5,
+          scannedFilesCount: 5,
+          isSupported: true,
+          isComplete: true,
+          hasSufficientCoverage: true,
+        },
+      },
+      unsupportedExtensions: [],
+      canMakeNegativeUsageClaim: true,
+    };
+
+    const health = evaluateDependencyHealth(directDep, [], coverage);
 
     assert.strictEqual(health.isUnreferenced, true);
     assert.ok(health.signals.some((s) => s.kind === 'unreferenced'));
@@ -728,5 +751,800 @@ describe('GT-012 — GT-016 Full Pipeline Integration with CodebaseAnalyzer', ()
     const expressUsages = depResult.sourceUsages[expressDep.id];
     assert.ok(expressUsages && expressUsages.length >= 1, 'Express must have mapped source usages');
     assert.strictEqual(expressUsages[0].filePath, 'src/server.ts');
+  });
+});
+
+describe('Issue #9: Fix Graph Relationship Accuracy Regression Suite', () => {
+  test('A transitive dependency with a known parent attaches only to that parent', () => {
+    const directExpress: NormalizedDependency = {
+      id: 'dep-express',
+      name: 'express',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.18.2',
+      versionResolved: '4.18.2',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      dependencies: ['body-parser'],
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const directJest: NormalizedDependency = {
+      id: 'dep-jest',
+      name: 'jest',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^29.7.0',
+      versionResolved: '29.7.0',
+      scope: 'dev',
+      isDirect: true,
+      isTransitive: false,
+      dependencies: ['diff-sequences'],
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const transBodyParser: NormalizedDependency = {
+      id: 'dep-body-parser',
+      name: 'body-parser',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.20.2',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['express'],
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const transDiffSeq: NormalizedDependency = {
+      id: 'dep-diff-sequences',
+      name: 'diff-sequences',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '29.6.3',
+      scope: 'dev',
+      isDirect: false,
+      isTransitive: true,
+      parentPackages: ['jest'],
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({
+      dependencies: [directExpress, directJest, transBodyParser, transDiffSeq],
+    });
+
+    const expressId = getStablePackageId(directExpress);
+    const jestId = getStablePackageId(directJest);
+    const bodyParserId = getStablePackageId(transBodyParser);
+    const diffSeqId = getStablePackageId(transDiffSeq);
+
+    // Verify valid parent-child relationships
+    const expressToBody = graph.edges.find((e) => e.source === expressId && e.target === bodyParserId);
+    const jestToDiff = graph.edges.find((e) => e.source === jestId && e.target === diffSeqId);
+    assert.ok(expressToBody, 'express must connect to body-parser');
+    assert.strictEqual(expressToBody.type, 'transitive');
+    assert.ok(jestToDiff, 'jest must connect to diff-sequences');
+    assert.strictEqual(jestToDiff.type, 'transitive');
+
+    // Verify NO cross-contamination or guessed relationships
+    const expressToDiff = graph.edges.find((e) => e.source === expressId && e.target === diffSeqId);
+    const jestToBody = graph.edges.find((e) => e.source === jestId && e.target === bodyParserId);
+    assert.strictEqual(expressToDiff, undefined, 'express must NOT connect to diff-sequences');
+    assert.strictEqual(jestToBody, undefined, 'jest must NOT connect to body-parser');
+  });
+
+  test('A dependency whose parent cannot be determined has zero manufactured edges', () => {
+    const directExpress: NormalizedDependency = {
+      id: 'dep-express',
+      name: 'express',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.18.2',
+      versionResolved: '4.18.2',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const transOrphan: NormalizedDependency = {
+      id: 'dep-orphan',
+      name: 'orphan-pkg',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: false,
+      isTransitive: true,
+      // Parent cannot be determined
+      parentPackages: undefined,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({
+      dependencies: [directExpress, transOrphan],
+    });
+
+    const orphanId = getStablePackageId(transOrphan);
+    assert.ok(graph.nodes[orphanId], 'Orphan package must exist in graph nodes');
+
+    // Must NOT manufacture any edge targeting orphan-pkg
+    const incomingEdges = graph.edges.filter((e) => e.target === orphanId);
+    assert.strictEqual(
+      incomingEdges.length,
+      0,
+      'Orphan package must have 0 manufactured incoming edges when parent is unknown'
+    );
+  });
+
+  test('A manifest with zero direct dependencies produces a manifest root node with zero edges', () => {
+    const graph = buildPackageDependencyGraph({
+      dependencies: [],
+      workspaces: [
+        {
+          id: 'ws-empty',
+          name: 'empty-pkg',
+          rootPath: 'packages/empty',
+          manifestPath: 'packages/empty/package.json',
+          ecosystem: 'javascript',
+          packageManager: 'npm',
+          isRootWorkspace: true,
+          packages: [],
+        },
+      ],
+    });
+
+    assert.ok(
+      graph.nodes['manifest:packages/empty/package.json'],
+      'Root node for manifest with zero dependencies must exist in graph'
+    );
+    assert.strictEqual(graph.stats.directCount, 0);
+    assert.strictEqual(graph.stats.transitiveCount, 0);
+    assert.strictEqual(graph.edges.length, 0);
+  });
+
+  test('Multiple versions of the same package produce distinct nodes and update multi-version stats', () => {
+    const depV3: NormalizedDependency = {
+      id: 'dep-lodash-3',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^3.10.1',
+      versionResolved: '3.10.1',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'packages/legacy/package.json',
+      lockfilePath: 'packages/legacy/package-lock.json',
+      evidence: [],
+    };
+
+    const depV4: NormalizedDependency = {
+      id: 'dep-lodash-4',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.17.21',
+      versionResolved: '4.17.21',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'packages/web/package.json',
+      lockfilePath: 'packages/web/package-lock.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({
+      dependencies: [depV3, depV4],
+    });
+
+    const v3Id = getStablePackageId(depV3);
+    const v4Id = getStablePackageId(depV4);
+    assert.notStrictEqual(v3Id, v4Id, 'Distinct versions must have distinct stable IDs');
+    assert.ok(graph.nodes[v3Id], 'v3 node must exist');
+    assert.ok(graph.nodes[v4Id], 'v4 node must exist');
+    assert.strictEqual(graph.stats.multiVersionCount, 1, 'lodash must be counted as 1 multi-version package');
+  });
+
+  test('Workspace relationship and duplicate-edge prevention', () => {
+    const wsDep: NormalizedDependency = {
+      id: 'dep-ws-ui',
+      name: '@repo/ui',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: 'workspace:*',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      isWorkspace: true,
+      manifestPath: 'apps/web/package.json',
+      evidence: [],
+    };
+
+    const graph = buildPackageDependencyGraph({
+      dependencies: [wsDep],
+      workspaces: [
+        {
+          id: 'ws-web',
+          name: 'web',
+          rootPath: 'apps/web',
+          manifestPath: 'apps/web/package.json',
+          ecosystem: 'javascript',
+          packageManager: 'npm',
+          isRootWorkspace: false,
+          packages: ['@repo/ui'],
+        },
+      ],
+    });
+
+    const wsEdges = graph.edges.filter((e) => e.type === 'workspace');
+    assert.strictEqual(wsEdges.length, 1, 'Exactly one workspace edge must be created');
+
+    // Duplicate check: passing same dependencies should not double edges
+    const graph2 = buildPackageDependencyGraph({
+      dependencies: [wsDep, { ...wsDep, id: 'dep-ws-ui-dup' }],
+    });
+    const wsEdges2 = graph2.edges.filter(
+      (e) => e.source === 'manifest:apps/web/package.json' && e.target === getStablePackageId(wsDep)
+    );
+    assert.strictEqual(wsEdges2.length, 1, 'Edges must be deduplicated when representing same semantic relationship');
+  });
+
+  test('Assert that every graph edge references existing nodes and no unsupported edge is invented', () => {
+    const deps: NormalizedDependency[] = [
+      {
+        id: 'd1',
+        name: 'a',
+        ecosystem: 'javascript',
+        packageManager: 'npm',
+        versionResolved: '1.0.0',
+        scope: 'runtime',
+        isDirect: true,
+        isTransitive: false,
+        dependencies: ['b'],
+        manifestPath: 'package.json',
+        evidence: [],
+      },
+      {
+        id: 'd2',
+        name: 'b',
+        ecosystem: 'javascript',
+        packageManager: 'npm',
+        versionResolved: '2.0.0',
+        scope: 'runtime',
+        isDirect: false,
+        isTransitive: true,
+        parentPackages: ['a'],
+        manifestPath: 'package.json',
+        evidence: [],
+      },
+      {
+        id: 'd3',
+        name: 'orphan',
+        ecosystem: 'javascript',
+        packageManager: 'npm',
+        versionResolved: '3.0.0',
+        scope: 'runtime',
+        isDirect: false,
+        isTransitive: true,
+        manifestPath: 'package.json',
+        evidence: [],
+      },
+    ];
+
+    const graph = buildPackageDependencyGraph({ dependencies: deps });
+
+    for (const edge of graph.edges) {
+      assert.ok(graph.nodes[edge.source], `Edge source '${edge.source}' must exist in graph.nodes`);
+      assert.ok(graph.nodes[edge.target], `Edge target '${edge.target}' must exist in graph.nodes`);
+    }
+  });
+});
+
+describe('Issue #10: Source Scan Coverage and Unreferenced Classification Regression Suite', () => {
+  test('A supported source language with a genuinely absent package import flags unreferenced', () => {
+    const directDep: NormalizedDependency = {
+      id: 'dep-rimraf',
+      name: 'rimraf',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^5.0.0',
+      versionResolved: '5.0.0',
+      scope: 'dev',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const files = {
+      'src/index.ts': {
+        content: `import express from 'express';\nconsole.log(express);\n`,
+      },
+    };
+
+    const result = mapPackagesToSourceUsage([directDep], files);
+    assert.ok(
+      result.unreferencedPackageIds.has(directDep.id),
+      'rimraf must be unreferenced when JS files are scanned and zero imports found'
+    );
+
+    const health = evaluateDependencyHealth(directDep, [], result.coverage);
+    assert.strictEqual(health.isUnreferenced, true);
+    assert.strictEqual(health.coverageStatus, 'covered');
+    assert.ok(health.signals.some((s) => s.kind === 'unreferenced'));
+  });
+
+  test('An unsupported source language (JVM, .NET, Swift) never flags unreferenced and reports analysis_unavailable', () => {
+    const jvmDep: NormalizedDependency = {
+      id: 'dep-guava',
+      name: 'com.google.guava:guava',
+      ecosystem: 'jvm',
+      packageManager: 'maven',
+      versionDeclared: '31.1-jre',
+      versionResolved: '31.1-jre',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'pom.xml',
+      lockfilePath: 'pom.xml',
+      evidence: [],
+    };
+
+    const files = {
+      'src/main/java/App.java': {
+        content: `package com.example;\npublic class App {}\n`,
+      },
+    };
+
+    const result = mapPackagesToSourceUsage([jvmDep], files);
+    assert.strictEqual(
+      result.unreferencedPackageIds.has(jvmDep.id),
+      false,
+      'Unsupported ecosystem JVM must NOT be labeled unreferenced'
+    );
+
+    const health = evaluateDependencyHealth(jvmDep, [], result.coverage);
+    assert.strictEqual(health.isUnreferenced, false, 'health.isUnreferenced must be false for unsupported language');
+    assert.strictEqual(health.coverageStatus, 'unsupported');
+    assert.ok(
+      health.signals.some((s) => s.kind === 'analysis_unavailable'),
+      'health must include analysis_unavailable signal'
+    );
+  });
+
+  test('A partially scanned repository does not make negative claims', () => {
+    const jsDep: NormalizedDependency = {
+      id: 'dep-lodash',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.17.21',
+      versionResolved: '4.17.21',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    // 0 scanned files: coverage cannot make negative claims
+    const emptyFiles = {};
+    const result = mapPackagesToSourceUsage([jsDep], emptyFiles);
+
+    assert.strictEqual(result.coverage.canMakeNegativeUsageClaim, false);
+    assert.strictEqual(
+      result.unreferencedPackageIds.has(jsDep.id),
+      false,
+      'Zero scanned files must not produce unreferenced finding'
+    );
+
+    const health = evaluateDependencyHealth(jsDep, [], result.coverage);
+    assert.strictEqual(health.isUnreferenced, false);
+    assert.strictEqual(health.coverageStatus, 'unscanned');
+    assert.ok(health.signals.some((s) => s.kind === 'analysis_unavailable'));
+  });
+
+  test('Multiline imports in JavaScript/TypeScript and Python are parsed correctly', () => {
+    const jsDep: NormalizedDependency = {
+      id: 'dep-auth',
+      name: 'user-service',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const pyDep: NormalizedDependency = {
+      id: 'dep-db',
+      name: 'data_layer',
+      ecosystem: 'python',
+      packageManager: 'pip',
+      versionResolved: '2.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'requirements.txt',
+      evidence: [],
+    };
+
+    const files = {
+      'src/auth.ts': {
+        content: `import {\n  findUser,\n  updateUser,\n} from 'user-service';\n`,
+      },
+      'database.py': {
+        content: `from data_layer import (\n    query_db,\n    commit_tx,\n)\n`,
+      },
+    };
+
+    const result = mapPackagesToSourceUsage([jsDep, pyDep], files);
+
+    const jsUsages = result.usagesByPackageId[jsDep.id];
+    assert.ok(jsUsages && jsUsages.length >= 1, 'Multiline JS import must be captured');
+    assert.strictEqual(jsUsages[0].filePath, 'src/auth.ts');
+
+    const pyUsages = result.usagesByPackageId[pyDep.id];
+    assert.ok(pyUsages && pyUsages.length >= 1, 'Multiline Python import must be captured');
+    assert.strictEqual(pyUsages[0].filePath, 'database.py');
+
+    assert.strictEqual(result.unreferencedPackageIds.has(jsDep.id), false);
+    assert.strictEqual(result.unreferencedPackageIds.has(pyDep.id), false);
+  });
+
+  test('Import-looking text inside comments is strictly ignored without false positives', () => {
+    const fakeDeps: NormalizedDependency[] = [
+      'fake-block-pkg',
+      'fake-require-pkg',
+      'fake-inline-pkg',
+      'fake_py_pkg',
+      'fake_single_docstring_pkg',
+      'fake_hash_pkg',
+    ].map((name, i) => ({
+      id: `fake-${i}`,
+      name,
+      ecosystem: name.includes('_py') || name.includes('docstring') || name.includes('hash') ? 'python' : 'javascript',
+      packageManager: 'npm',
+      versionResolved: '1.0.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    }));
+
+    const files = {
+      'src/example.ts': {
+        content: `/*\n * import { fakeA } from 'fake-block-pkg';\n * const fakeB = require('fake-require-pkg');\n */\n// import { fakeC } from 'fake-inline-pkg';\nexport const x = 1;\n`,
+      },
+      'example.py': {
+        content: `"""\nimport fake_py_pkg\n"""\n'''\nfrom fake_single_docstring_pkg import something\n'''\n# import fake_hash_pkg\nx = 1\n`,
+      },
+    };
+
+    const result = mapPackagesToSourceUsage(fakeDeps, files);
+
+    for (const dep of fakeDeps) {
+      const usages = result.usagesByPackageId[dep.id];
+      assert.strictEqual(
+        usages.length,
+        0,
+        `Package '${dep.name}' in comments must NOT produce any source usages`
+      );
+    }
+  });
+
+  test('Scoped packages, subpath imports, and aliased imports map with appropriate confidence', () => {
+    const deps: NormalizedDependency[] = [
+      {
+        id: 'dep-query',
+        name: '@tanstack/react-query',
+        ecosystem: 'javascript',
+        packageManager: 'npm',
+        versionResolved: '5.0.0',
+        scope: 'runtime',
+        isDirect: true,
+        isTransitive: false,
+        manifestPath: 'package.json',
+        evidence: [],
+      },
+      {
+        id: 'dep-lodash',
+        name: 'lodash',
+        ecosystem: 'javascript',
+        packageManager: 'npm',
+        versionResolved: '4.17.21',
+        scope: 'runtime',
+        isDirect: true,
+        isTransitive: false,
+        manifestPath: 'package.json',
+        evidence: [],
+      },
+      {
+        id: 'dep-react-dom',
+        name: 'react-dom',
+        ecosystem: 'javascript',
+        packageManager: 'npm',
+        versionResolved: '18.2.0',
+        scope: 'runtime',
+        isDirect: true,
+        isTransitive: false,
+        manifestPath: 'package.json',
+        evidence: [],
+      },
+    ];
+
+    const files = {
+      'src/index.tsx': {
+        content: `import { useQuery } from '@tanstack/react-query';\nimport get from 'lodash/get';\nimport * as ClientDOM from 'react-dom/client';\n`,
+      },
+    };
+
+    const result = mapPackagesToSourceUsage(deps, files);
+
+    const queryUsages = result.usagesByPackageId['dep-query'];
+    assert.strictEqual(queryUsages.length, 1);
+    assert.strictEqual(queryUsages[0].confidence, 'static_import');
+
+    const lodashUsages = result.usagesByPackageId['dep-lodash'];
+    assert.strictEqual(lodashUsages.length, 1);
+    assert.strictEqual(lodashUsages[0].confidence, 'subpath_import');
+
+    const domUsages = result.usagesByPackageId['dep-react-dom'];
+    assert.strictEqual(domUsages.length, 1);
+    assert.strictEqual(domUsages[0].confidence, 'subpath_import');
+  });
+});
+
+describe('Issue #12: Duplicate and Conflict Health Signals Consistency Regression Suite', () => {
+  test('Duplicate resolved versions consistently produce duplicate signals and warning status', () => {
+    const dep1: NormalizedDependency = {
+      id: 'dep-lodash-a',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.17.21',
+      versionResolved: '4.17.21',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'apps/a/package.json',
+      lockfilePath: 'apps/a/package-lock.json',
+      evidence: [],
+    };
+
+    const dep2: NormalizedDependency = {
+      id: 'dep-lodash-b',
+      name: 'lodash',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.17.21',
+      versionResolved: '4.17.21',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'apps/b/package.json',
+      lockfilePath: 'apps/b/package-lock.json',
+      evidence: [],
+    };
+
+    const { updatedDependencies } = reconcileWorkspaceProvenance([dep1, dep2]);
+
+    for (const dep of updatedDependencies) {
+      const health = evaluateDependencyHealth(dep, []);
+      assert.strictEqual(health.isDuplicate, true, 'isDuplicate must be true');
+      assert.strictEqual(health.isClean, false, 'Duplicate package cannot be clean');
+      assert.strictEqual(health.status, 'warning', 'Duplicate package status must be warning');
+      assert.ok(
+        health.signals.some((s) => s.kind === 'duplicate'),
+        'Must contain duplicate signal'
+      );
+    }
+  });
+
+  test('Conflicting workspace declarations consistently produce conflict status and error', () => {
+    const dep1: NormalizedDependency = {
+      id: 'dep-react-17',
+      name: 'react',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^17.0.0',
+      versionResolved: '17.0.2',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'apps/a/package.json',
+      lockfilePath: 'apps/a/package-lock.json',
+      evidence: [],
+    };
+
+    const dep2: NormalizedDependency = {
+      id: 'dep-react-18',
+      name: 'react',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^18.0.0',
+      versionResolved: '18.2.0',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'apps/b/package.json',
+      lockfilePath: 'apps/b/package-lock.json',
+      evidence: [],
+    };
+
+    const { updatedDependencies } = reconcileWorkspaceProvenance([dep1, dep2]);
+
+    for (const dep of updatedDependencies) {
+      const health = evaluateDependencyHealth(dep, []);
+      assert.strictEqual(health.hasConflict, true, 'hasConflict must be true');
+      assert.strictEqual(health.isClean, false, 'Conflicting package cannot be clean');
+      assert.strictEqual(health.status, 'error', 'Conflicting package status must be error');
+      assert.ok(
+        health.signals.some((s) => s.kind === 'conflict'),
+        'Must contain conflict signal'
+      );
+    }
+  });
+
+  test('Missing lockfile evidence is classified as unlocked and never clean', () => {
+    const unlockedDep: NormalizedDependency = {
+      id: 'dep-dotenv',
+      name: 'dotenv',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^16.0.0',
+      versionResolved: undefined,
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      evidence: [],
+    };
+
+    const health = evaluateDependencyHealth(unlockedDep, []);
+    assert.strictEqual(health.isUnlocked, true);
+    assert.strictEqual(health.isClean, false, 'Unlocked dependency must never be clean');
+    assert.strictEqual(health.status, 'warning');
+    assert.ok(health.signals.some((s) => s.kind === 'unlocked'));
+  });
+
+  test('Incomplete source coverage cannot create a clean/unreferenced contradiction', () => {
+    const dep: NormalizedDependency = {
+      id: 'dep-express',
+      name: 'express',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^4.18.2',
+      versionResolved: '4.18.2',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const unscannedCoverage: SourceScanCoverage = {
+      totalSourceFilesDetected: 5,
+      totalSourceFilesScanned: 0,
+      languages: {
+        javascript: {
+          ecosystem: 'javascript',
+          language: 'typescript',
+          detectedFilesCount: 5,
+          scannedFilesCount: 0,
+          isSupported: true,
+          hasSufficientCoverage: false,
+          isComplete: false,
+        },
+      },
+      unsupportedExtensions: [],
+      canMakeNegativeUsageClaim: false,
+    };
+
+    const health = evaluateDependencyHealth(dep, [], unscannedCoverage);
+    assert.strictEqual(health.isUnreferenced, false, 'Must not claim unreferenced when unscanned');
+    assert.strictEqual(health.coverageStatus, 'unscanned');
+    assert.ok(health.signals.some((s) => s.kind === 'analysis_unavailable'));
+    assert.strictEqual(
+      health.signals.some((s) => s.kind === 'unreferenced'),
+      false,
+      'Must NOT contain unreferenced signal'
+    );
+  });
+
+  test('Table filtering, graph health, and inspector signals agree for the same dependency', () => {
+    const cleanDep: NormalizedDependency = {
+      id: 'd-clean',
+      name: 'zod',
+      ecosystem: 'javascript',
+      packageManager: 'npm',
+      versionDeclared: '^3.22.4',
+      versionResolved: '3.22.4',
+      scope: 'runtime',
+      isDirect: true,
+      isTransitive: false,
+      manifestPath: 'package.json',
+      lockfilePath: 'package-lock.json',
+      evidence: [],
+    };
+
+    const usages = [
+      {
+        id: 'u1',
+        packageId: 'd-clean',
+        packageName: 'zod',
+        ecosystem: 'javascript' as const,
+        filePath: 'src/schema.ts',
+        location: { filePath: 'src/schema.ts', startLine: 1, endLine: 1, startColumn: 1, endColumn: 20 },
+        confidence: 'static_import' as const,
+        isDirectImport: true,
+        evidenceNote: '',
+      },
+    ];
+
+    const coverage: SourceScanCoverage = {
+      totalSourceFilesDetected: 1,
+      totalSourceFilesScanned: 1,
+      languages: {
+        javascript: {
+          ecosystem: 'javascript',
+          language: 'typescript',
+          detectedFilesCount: 1,
+          scannedFilesCount: 1,
+          isSupported: true,
+          hasSufficientCoverage: true,
+          isComplete: true,
+        },
+      },
+      unsupportedExtensions: [],
+      canMakeNegativeUsageClaim: true,
+    };
+
+    // Evaluate health
+    const health = evaluateDependencyHealth(cleanDep, usages, coverage);
+
+    // Verify properties
+    assert.strictEqual(health.isClean, true);
+    assert.strictEqual(health.status, 'healthy');
+    assert.strictEqual(health.hasConflict, false);
+    assert.strictEqual(health.isDuplicate, false);
+    assert.strictEqual(health.isUnlocked, false);
+    assert.strictEqual(health.isUnreferenced, false);
+
+    // Inspector derives status and signals from the exact same evaluator
+    assert.ok(health.signals.some((s) => s.kind === 'clean'));
+
+    // Filter tab logic uses the exact same properties
+    const matchesCleanTab = health.isClean;
+    const matchesConflictTab = health.hasConflict;
+    const matchesUnlockedTab = health.isUnlocked;
+    const matchesDuplicateTab = health.isDuplicate;
+    const matchesUnreferencedTab = health.isUnreferenced;
+
+    assert.strictEqual(matchesCleanTab, true);
+    assert.strictEqual(matchesConflictTab, false);
+    assert.strictEqual(matchesUnlockedTab, false);
+    assert.strictEqual(matchesDuplicateTab, false);
+    assert.strictEqual(matchesUnreferencedTab, false);
   });
 });

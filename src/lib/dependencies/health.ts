@@ -11,28 +11,46 @@ import {
   DependencyHealthIndicator,
   DependencyHealthSignal,
   PackageSourceUsage,
+  SourceScanCoverage,
 } from './types';
+import { canMakeNegativeUsageClaim } from './source-usage';
+import { buildDependencyProvenance } from './provenance';
 
 /**
  * Evaluates health signals and diagnostics for a normalized package dependency.
+ * Fully coverage-aware and resilient to inconsistent provenance flags.
  */
 export function evaluateDependencyHealth(
   dep: NormalizedDependency,
-  sourceUsages: PackageSourceUsage[] = []
+  sourceUsages: PackageSourceUsage[] = [],
+  coverage?: SourceScanCoverage
 ): DependencyHealthIndicator {
   const signals: DependencyHealthSignal[] = [];
 
-  const prov = dep.provenance;
-  let hasConflict = false;
+  const prov =
+    dep.provenance ||
+    (dep.versionDeclared || dep.versionResolved
+      ? buildDependencyProvenance({
+          name: dep.name,
+          ecosystem: dep.ecosystem,
+          packageManager: dep.packageManager,
+          manifestPath: dep.manifestPath,
+          lockfilePath: dep.lockfilePath,
+          declaredSpecifier: dep.versionDeclared,
+          resolvedVersion: dep.versionResolved,
+          isDirect: dep.isDirect,
+        })
+      : undefined);
+  const conflicts = prov?.conflicts || [];
+  let hasConflict = prov?.hasConflict || prov?.status === 'conflicting' || false;
   let isUnlocked = false;
   let isDuplicate = false;
-  const isUnreferenced = dep.isDirect && sourceUsages.length === 0;
 
-  // 1. Check Version Conflicts & Range Mismatches
-  if (prov?.hasConflict) {
-    hasConflict = true;
-    for (const c of prov.conflicts) {
+  // 1. Check Version Conflicts, Duplicates, and Skew from provenance conflicts array directly
+  if (conflicts.length > 0) {
+    for (const c of conflicts) {
       if (c.kind === 'range_mismatch') {
+        hasConflict = true;
         signals.push({
           kind: 'conflict',
           severity: 'error',
@@ -41,6 +59,7 @@ export function evaluateDependencyHealth(
           evidencePath: dep.lockfilePath || dep.manifestPath,
         });
       } else if (c.kind === 'workspace_version_conflict') {
+        hasConflict = true;
         signals.push({
           kind: 'conflict',
           severity: 'error',
@@ -49,6 +68,7 @@ export function evaluateDependencyHealth(
           evidencePath: dep.manifestPath,
         });
       } else if (c.kind === 'missing_lockfile_resolution') {
+        isUnlocked = true;
         signals.push({
           kind: 'unlocked',
           severity: 'warning',
@@ -56,7 +76,6 @@ export function evaluateDependencyHealth(
           message: c.message,
           evidencePath: dep.lockfilePath || dep.manifestPath,
         });
-        isUnlocked = true;
       } else if (c.kind === 'duplicate_version_in_workspace') {
         isDuplicate = true;
         signals.push({
@@ -67,12 +86,13 @@ export function evaluateDependencyHealth(
           evidencePath: dep.manifestPath,
         });
       } else if (c.kind === 'stale_installed_disk') {
+        hasConflict = true;
         signals.push({
           kind: 'stale_disk',
           severity: 'warning',
           title: 'Stale Local Environment',
           message: c.message,
-          evidencePath: prov.installed.sourceFilePath || dep.manifestPath,
+          evidencePath: prov?.installed.sourceFilePath || dep.manifestPath,
         });
       }
     }
@@ -90,8 +110,34 @@ export function evaluateDependencyHealth(
     });
   }
 
-  // 3. Unreferenced Direct Dependency Flag
-  if (isUnreferenced) {
+  // 3. Source-Usage Analysis with explicit Coverage Guard
+  const canCheckUsage = canMakeNegativeUsageClaim(dep.ecosystem, coverage);
+  let isUnreferenced = false;
+  let coverageStatus: DependencyHealthIndicator['coverageStatus'] = 'covered';
+
+  if (!canCheckUsage) {
+    const isSupported =
+      (dep.ecosystem === 'javascript' ||
+        dep.ecosystem === 'python' ||
+        dep.ecosystem === 'rust' ||
+        dep.ecosystem === 'go') &&
+      coverage?.languages[dep.ecosystem]?.isSupported !== false;
+
+    coverageStatus = !isSupported ? 'unsupported' : 'unscanned';
+
+    if (dep.isDirect && sourceUsages.length === 0) {
+      signals.push({
+        kind: 'analysis_unavailable',
+        severity: 'info',
+        title: 'Source Usage Analysis Unavailable',
+        message: coverageStatus === 'unsupported'
+          ? `Source parser for ecosystem '${dep.ecosystem}' is not implemented; static usage cannot be verified.`
+          : `No source files for ecosystem '${dep.ecosystem}' were detected in repository input; usage is unverified.`,
+        evidencePath: dep.manifestPath,
+      });
+    }
+  } else if (dep.isDirect && sourceUsages.length === 0) {
+    isUnreferenced = true;
     signals.push({
       kind: 'unreferenced',
       severity: 'warning',
@@ -101,8 +147,19 @@ export function evaluateDependencyHealth(
     });
   }
 
-  // 4. Clean Evidence Verification
-  if (signals.length === 0 && dep.versionResolved && dep.lockfilePath) {
+  // 4. Clean Evidence Verification:
+  // Requires locked resolution, range satisfaction, absence of conflicts/duplicates, and established status
+  const isClean =
+    !hasConflict &&
+    !isUnlocked &&
+    !isDuplicate &&
+    dep.lockfilePath !== undefined &&
+    dep.versionResolved !== undefined &&
+    prov?.status === 'established' &&
+    (prov.satisfiesRange === true || (!dep.versionDeclared && !dep.isDirect)) &&
+    !signals.some((s) => s.severity === 'error' || s.severity === 'warning');
+
+  if (isClean) {
     signals.push({
       kind: 'clean',
       severity: 'healthy',
@@ -118,16 +175,20 @@ export function evaluateDependencyHealth(
     status = 'error';
   } else if (signals.some((s) => s.severity === 'warning')) {
     status = 'warning';
-  } else if (signals.length === 0 || (!dep.versionDeclared && !dep.versionResolved)) {
+  } else if (isClean) {
+    status = 'healthy';
+  } else {
     status = 'unknown';
   }
 
   return {
     status,
     signals,
+    isClean,
     hasConflict,
     isUnreferenced,
     isUnlocked,
     isDuplicate,
+    coverageStatus,
   };
 }

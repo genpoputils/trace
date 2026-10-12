@@ -6,7 +6,9 @@ import {
   PackageDependencyGraph,
   PackageSourceUsage,
   NormalizedDependency,
+  SourceScanCoverage,
 } from '@/lib/dependencies/types';
+import { evaluateDependencyHealth } from '@/lib/dependencies/health';
 import {
   Package,
   FileCode,
@@ -27,6 +29,7 @@ export interface PackageInspectorProps {
   dependency?: NormalizedDependency | null;
   graph?: PackageDependencyGraph | null;
   sourceUsages?: PackageSourceUsage[];
+  coverage?: SourceScanCoverage;
   onSelectPackage?: (packageId: string) => void;
   onClose?: () => void;
   onOpenSourceLocation?: (location: { filePath: string; line: number }) => void;
@@ -37,6 +40,7 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
   dependency,
   graph,
   sourceUsages = [],
+  coverage,
   onSelectPackage,
   onClose,
   onOpenSourceLocation,
@@ -57,6 +61,8 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
         scope: dependency.scope,
         isDirect: dependency.isDirect,
         isTransitive: dependency.isTransitive,
+        parentPackages: dependency.parentPackages,
+        dependencies: dependency.dependencies,
         manifestPath: dependency.manifestPath,
         lockfilePath: dependency.lockfilePath,
         workspacePath: dependency.workspacePath,
@@ -64,18 +70,11 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
         dependenciesCount: 0,
         dependentsCount: 0,
         sourceUsagesCount: sourceUsages.length,
-        health: {
-          status: dependency.provenance?.hasConflict ? 'error' : dependency.versionResolved ? 'healthy' : 'warning',
-          signals: [],
-          hasConflict: !!dependency.provenance?.hasConflict,
-          isUnreferenced: sourceUsages.length === 0 && dependency.isDirect,
-          isUnlocked: !dependency.versionResolved,
-          isDuplicate: false,
-        },
+        health: evaluateDependencyHealth(dependency, sourceUsages, coverage),
       };
     }
     return null;
-  }, [packageNode, dependency, sourceUsages]);
+  }, [packageNode, dependency, sourceUsages, coverage]);
 
   // Outgoing dependencies and ingoing dependents from graph
   const outgoingDependencies = React.useMemo(() => {
@@ -292,7 +291,7 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
               Duplicate Version
             </span>
           )}
-          {health.isUnreferenced && (
+          {health.isUnreferenced ? (
             <span
               style={{
                 fontSize: 10,
@@ -305,7 +304,20 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
             >
               Unreferenced in Source
             </span>
-          )}
+          ) : (health.coverageStatus === 'unsupported' || health.coverageStatus === 'unscanned') && node.isDirect && sourceUsages.length === 0 ? (
+            <span
+              style={{
+                fontSize: 10,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: 'var(--bg-tertiary)',
+                color: 'var(--text-muted)',
+                fontWeight: 600,
+              }}
+            >
+              Analysis Unavailable
+            </span>
+          ) : null}
           {health.status === 'healthy' && (
             <span
               style={{
@@ -578,9 +590,9 @@ export const PackageInspector: React.FC<PackageInspectorProps> = ({
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 240, overflowY: 'auto' }}>
-              {sourceUsages.map((usage) => (
+              {sourceUsages.map((usage, uIdx) => (
                 <div
-                  key={usage.id}
+                  key={`${usage.id}-${uIdx}`}
                   style={{
                     padding: 8,
                     background: 'var(--bg-card)',

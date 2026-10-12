@@ -26,6 +26,7 @@ import {
 import { PackageDependencyGraphView } from '../graph/PackageDependencyGraphView';
 import { PackageInspector } from '../inspector/PackageInspector';
 import { getStablePackageId } from '@/lib/dependencies/graph';
+import { evaluateDependencyHealth } from '@/lib/dependencies/health';
 
 interface DependencyInventoryViewProps {
   analysis: ProjectAnalysis;
@@ -65,10 +66,18 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
     () => depScan?.discoveredFiles || [],
     [depScan]
   );
-  const dependencies: NormalizedDependency[] = useMemo(
-    () => depScan?.dependencies || [],
-    [depScan]
-  );
+  const dependencies: NormalizedDependency[] = useMemo(() => {
+    if (!depScan?.dependencies) return [];
+    const seen = new Set<string>();
+    const unique: NormalizedDependency[] = [];
+    for (const d of depScan.dependencies) {
+      if (!seen.has(d.id)) {
+        seen.add(d.id);
+        unique.push(d);
+      }
+    }
+    return unique;
+  }, [depScan]);
   const diagnostics: ManifestDiagnostic[] = useMemo(
     () => depScan?.diagnostics || [],
     [depScan]
@@ -120,7 +129,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
     return dupes;
   }, [dependencies]);
 
-  // Comprehensive health & provenance statistics derived dynamically
+  // Comprehensive health & provenance statistics derived dynamically using shared evaluateDependencyHealth
   const healthStats = useMemo(() => {
     let cleanCount = 0;
     let unlockedCount = 0;
@@ -131,14 +140,14 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
 
     for (const dep of dependencies) {
       const usages = depScan?.sourceUsages?.[dep.id] || [];
-      const isDupe = duplicateNames.has(`${dep.ecosystem}:${dep.name.toLowerCase()}`);
+      const health = evaluateDependencyHealth(dep, usages, depScan?.coverage);
 
-      if (dep.provenance?.hasConflict) conflictsCount++;
-      if (dep.isDirect && !dep.versionResolved) unlockedCount++;
-      if (dep.versionResolved && !dep.provenance?.hasConflict) cleanCount++;
+      if (health.hasConflict) conflictsCount++;
+      if (health.isUnlocked) unlockedCount++;
+      if (health.isDuplicate) duplicatesCount++;
+      if (health.isClean) cleanCount++;
+      if (health.isUnreferenced) unreferencedCount++;
       if (dep.versionInstalled) installedCount++;
-      if (isDupe) duplicatesCount++;
-      if (dep.isDirect && usages.length === 0) unreferencedCount++;
     }
 
     return {
@@ -150,7 +159,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
       installedCount,
       totalUsages: depScan?.stats?.totalSourceUsagesCount || 0,
     };
-  }, [dependencies, duplicateNames, depScan?.sourceUsages, depScan?.stats?.totalSourceUsagesCount]);
+  }, [dependencies, depScan?.sourceUsages, depScan?.coverage, depScan?.stats?.totalSourceUsagesCount]);
 
   // Resolve selected node and dependency
   const selectedPackageNode = useMemo(() => {
@@ -201,20 +210,20 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
         return false;
       }
 
-      // 4. Health & Provenance Status Filter
+      // 4. Health & Provenance Status Filter using shared evaluator
       const usages = depScan?.sourceUsages?.[dep.id] || [];
-      const isDupe = duplicateNames.has(`${dep.ecosystem}:${dep.name.toLowerCase()}`);
+      const health = evaluateDependencyHealth(dep, usages, depScan?.coverage);
 
-      if (healthFilter === 'clean' && (!dep.versionResolved || dep.provenance?.hasConflict)) return false;
-      if (healthFilter === 'unlocked' && (!dep.isDirect || dep.versionResolved)) return false;
-      if (healthFilter === 'conflicts' && !dep.provenance?.hasConflict) return false;
-      if (healthFilter === 'duplicates' && !isDupe) return false;
-      if (healthFilter === 'unreferenced' && (!dep.isDirect || usages.length > 0)) return false;
+      if (healthFilter === 'clean' && !health.isClean) return false;
+      if (healthFilter === 'unlocked' && !health.isUnlocked) return false;
+      if (healthFilter === 'conflicts' && !health.hasConflict) return false;
+      if (healthFilter === 'duplicates' && !health.isDuplicate) return false;
+      if (healthFilter === 'unreferenced' && !health.isUnreferenced) return false;
       if (healthFilter === 'installed' && !dep.versionInstalled) return false;
 
       return true;
     });
-  }, [dependencies, searchQuery, ecosystemFilter, scopeFilter, healthFilter, duplicateNames, depScan?.sourceUsages]);
+  }, [dependencies, searchQuery, ecosystemFilter, scopeFilter, healthFilter, depScan?.sourceUsages, depScan?.coverage]);
 
   const hasLockfileForEcosystem = (ecosystem: string) => {
     return lockfiles.some((l) => l.ecosystem === ecosystem);
@@ -223,7 +232,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
   return (
     <div
       style={{
-        flex: 1,
+        height: '100%',
         overflowY: 'auto',
         padding: 24,
         background: 'var(--bg-primary)',
@@ -678,10 +687,10 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                 </thead>
                 <tbody>
                   {filteredDependencies.map((pkg) => {
-                    const hasConflict = pkg.provenance?.hasConflict;
-                    const isSelected = activeSelectedId === pkg.id;
                     const usages = depScan?.sourceUsages?.[pkg.id] || [];
-                    const isDupe = duplicateNames.has(`${pkg.ecosystem}:${pkg.name.toLowerCase()}`);
+                    const health = evaluateDependencyHealth(pkg, usages, depScan?.coverage);
+                    const hasConflict = health.hasConflict;
+                    const isSelected = activeSelectedId === pkg.id;
 
                     return (
                       <tr
@@ -726,7 +735,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
 
                         {/* Column 2: Health Status Indicator (GT-016) */}
                         <td style={{ padding: '10px 10px' }}>
-                          {hasConflict ? (
+                          {health.hasConflict ? (
                             <span
                               style={{
                                 fontSize: 11,
@@ -742,7 +751,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                             >
                               <AlertTriangle size={12} /> Conflict
                             </span>
-                          ) : !pkg.versionResolved && pkg.isDirect ? (
+                          ) : health.isUnlocked ? (
                             <span
                               style={{
                                 fontSize: 11,
@@ -758,7 +767,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                             >
                               <AlertCircle size={12} /> Unlocked
                             </span>
-                          ) : isDupe ? (
+                          ) : health.isDuplicate ? (
                             <span
                               style={{
                                 fontSize: 11,
@@ -774,7 +783,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                             >
                               <Layers size={12} /> Duplicate
                             </span>
-                          ) : pkg.versionResolved ? (
+                          ) : health.isClean ? (
                             <span
                               style={{
                                 fontSize: 11,
@@ -800,7 +809,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                                 color: 'var(--text-muted)',
                               }}
                             >
-                              Transitive
+                              {pkg.isTransitive ? 'Transitive' : 'Unverified'}
                             </span>
                           )}
                         </td>
@@ -906,19 +915,35 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
                               {usages.length} usage{usages.length === 1 ? '' : 's'}
                             </span>
                           ) : pkg.isDirect ? (
-                            <span
-                              style={{
-                                fontSize: 11,
-                                padding: '2px 8px',
-                                borderRadius: 4,
-                                background: 'rgba(245, 158, 11, 0.12)',
-                                color: 'var(--warning-amber)',
-                                fontWeight: 500,
-                              }}
-                              title="Declared in manifest, but zero imports detected in analyzed source files"
-                            >
-                              0 (unreferenced)
-                            </span>
+                            health.isUnreferenced ? (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                  background: 'rgba(245, 158, 11, 0.12)',
+                                  color: 'var(--warning-amber)',
+                                  fontWeight: 500,
+                                }}
+                                title="Declared in manifest, but zero imports detected in analyzed source files"
+                              >
+                                0 (unreferenced)
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                  background: 'var(--bg-tertiary)',
+                                  color: 'var(--text-muted)',
+                                  fontWeight: 500,
+                                }}
+                                title="Source analysis is unavailable or language is unsupported for negative claims"
+                              >
+                                Analysis unavailable
+                              </span>
+                            )
                           ) : (
                             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>transitive</span>
                           )}
@@ -958,6 +983,7 @@ export const DependencyInventoryView: React.FC<DependencyInventoryViewProps> = (
               depScan?.sourceUsages?.[activeSelectedId] ||
               []
             }
+            coverage={depScan?.coverage}
             onSelectPackage={handleSelectPackage}
             onClose={() => handleSelectPackage(null)}
             onOpenSourceLocation={onOpenSourceLocation}

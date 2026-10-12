@@ -13,6 +13,7 @@ import {
   PackageDependencyEdgeType,
   PackageDependencyGraph,
   PackageSourceUsage,
+  SourceScanCoverage,
   WorkspaceDescriptor,
   DependencyScope,
   EcosystemType,
@@ -32,6 +33,7 @@ export interface BuildGraphOptions {
   dependencies: NormalizedDependency[];
   sourceUsages?: Record<string, PackageSourceUsage[]>;
   workspaces?: WorkspaceDescriptor[];
+  coverage?: SourceScanCoverage;
 }
 
 /**
@@ -40,17 +42,21 @@ export interface BuildGraphOptions {
 export function buildPackageDependencyGraph(
   options: BuildGraphOptions
 ): PackageDependencyGraph {
-  const { dependencies, sourceUsages = {}, workspaces = [] } = options;
+  const { dependencies, sourceUsages = {}, workspaces = [], coverage } = options;
 
   const nodes: Record<string, PackageDependencyNode> = {};
   const edges: PackageDependencyEdge[] = [];
   const rootNodeIds: string[] = [];
+  const edgeIdSet = new Set<string>();
+
+  // Map package name (lowercase) to nodes for parent resolution
+  const nodesByName = new Map<string, PackageDependencyNode[]>();
 
   // 1. Create nodes for all dependencies
   for (const dep of dependencies) {
     const stableId = getStablePackageId(dep);
     const usages = sourceUsages[dep.id] || sourceUsages[stableId] || [];
-    const health = evaluateDependencyHealth(dep, usages);
+    const health = evaluateDependencyHealth(dep, usages, coverage);
 
     const node: PackageDependencyNode = {
       id: stableId,
@@ -64,6 +70,9 @@ export function buildPackageDependencyGraph(
       scope: dep.scope,
       isDirect: dep.isDirect,
       isTransitive: dep.isTransitive,
+      isWorkspace: dep.isWorkspace,
+      parentPackages: dep.parentPackages,
+      dependencies: dep.dependencies,
       manifestPath: dep.manifestPath,
       lockfilePath: dep.lockfilePath,
       workspacePath: dep.workspacePath,
@@ -76,6 +85,11 @@ export function buildPackageDependencyGraph(
 
     nodes[stableId] = node;
 
+    const nameKey = dep.name.toLowerCase();
+    const list = nodesByName.get(nameKey) || [];
+    list.push(node);
+    nodesByName.set(nameKey, list);
+
     if (dep.isDirect) {
       rootNodeIds.push(stableId);
     }
@@ -84,7 +98,7 @@ export function buildPackageDependencyGraph(
   // 2. Identify multi-version packages
   const packagesByName = new Map<string, Set<string>>();
   for (const node of Object.values(nodes)) {
-    const key = `${node.ecosystem}:${node.name}`;
+    const key = `${node.ecosystem}:${node.name.toLowerCase()}`;
     const versions = packagesByName.get(key) || new Set<string>();
     if (node.versionResolved) versions.add(node.versionResolved);
     else if (node.versionDeclared) versions.add(node.versionDeclared);
@@ -98,7 +112,15 @@ export function buildPackageDependencyGraph(
     }
   }
 
-  // 3. Synthesize Manifest Root Nodes & Direct Edges
+  // 3. Synthesize Manifest Root Nodes for ALL manifests (including manifests with zero direct dependencies)
+  const allManifestPaths = new Set<string>();
+  for (const dep of dependencies) {
+    allManifestPaths.add(dep.manifestPath);
+  }
+  for (const ws of workspaces) {
+    allManifestPaths.add(ws.manifestPath);
+  }
+
   // Group direct nodes by manifest
   const directsByManifest = new Map<string, PackageDependencyNode[]>();
   const transitivesByManifest = new Map<string, PackageDependencyNode[]>();
@@ -115,12 +137,12 @@ export function buildPackageDependencyGraph(
     }
   }
 
-  // Create workspace / root manifest nodes
-  for (const [manifestPath, directNodes] of directsByManifest.entries()) {
+  // Create manifest root nodes for all discovered manifest paths
+  for (const manifestPath of allManifestPaths) {
     const rootId = `manifest:${manifestPath}`;
+    const directNodes = directsByManifest.get(manifestPath) || [];
     const manifestName = manifestPath.split('/').pop() || manifestPath;
 
-    // Create manifest node
     nodes[rootId] = {
       id: rootId,
       name: manifestName,
@@ -142,13 +164,17 @@ export function buildPackageDependencyGraph(
         isUnreferenced: false,
         isUnlocked: false,
         isDuplicate: false,
+        isClean: true,
+        coverageStatus: 'covered',
       },
     };
 
     // Add typed edges from Manifest Root -> Direct Dependencies
     for (const directNode of directNodes) {
       const edgeType: PackageDependencyEdgeType =
-        directNode.scope === 'dev'
+        directNode.isWorkspace
+          ? 'workspace'
+          : directNode.scope === 'dev'
           ? 'dev'
           : directNode.scope === 'peer'
           ? 'peer'
@@ -157,46 +183,62 @@ export function buildPackageDependencyGraph(
           : 'runtime';
       const edgeId = `${rootId}->${directNode.id}:${edgeType}`;
 
-      edges.push({
-        id: edgeId,
-        source: rootId,
-        target: directNode.id,
-        type: edgeType,
-        isTransitive: false,
-        versionRange: directNode.versionDeclared,
-        resolvedVersion: directNode.versionResolved,
-        sourceFilePath: manifestPath,
-      });
+      if (!edgeIdSet.has(edgeId)) {
+        edgeIdSet.add(edgeId);
+        edges.push({
+          id: edgeId,
+          source: rootId,
+          target: directNode.id,
+          type: edgeType,
+          isTransitive: false,
+          versionRange: directNode.versionDeclared,
+          resolvedVersion: directNode.versionResolved,
+          sourceFilePath: manifestPath,
+        });
 
-      directNode.dependentsCount++;
+        directNode.dependentsCount++;
+      }
     }
   }
 
-  // 4. Connect transitive dependencies to direct nodes or manifest
-  for (const [manifestPath, transNodes] of transitivesByManifest.entries()) {
-    const rootId = `manifest:${manifestPath}`;
-    const directNodes = directsByManifest.get(manifestPath) || [];
-
+  // 4. Connect transitive dependencies using VALIDATED parent-child evidence
+  // Never attach all transitive dependencies to the first direct dependency as a guessed parent.
+  // If an adapter identifies a package and its resolved version, but not its parent dependency,
+  // represent the relationship as unknown/incomplete without manufacturing a specific edge.
+  for (const [, transNodes] of transitivesByManifest.entries()) {
     for (const transNode of transNodes) {
-      // Connect transitive to a direct node or root if parent lockfile tree was unindexed
-      const parentTarget = directNodes.length > 0 ? directNodes[0] : null;
-      const sourceId = parentTarget ? parentTarget.id : rootId;
-      const edgeId = `${sourceId}->${transNode.id}:transitive`;
+      if (transNode.parentPackages && transNode.parentPackages.length > 0) {
+        for (const parentName of transNode.parentPackages) {
+          const candidates = (nodesByName.get(parentName.toLowerCase()) || []).filter(
+            (p) => !p.id.startsWith('manifest:') && p.id !== transNode.id
+          );
 
-      edges.push({
-        id: edgeId,
-        source: sourceId,
-        target: transNode.id,
-        type: 'transitive',
-        isTransitive: true,
-        resolvedVersion: transNode.versionResolved,
-        sourceFilePath: transNode.lockfilePath || manifestPath,
-      });
+          if (candidates.length > 0) {
+            // Prefer parent in the same manifest or workspace
+            const matchedParent =
+              candidates.find((p) => p.manifestPath === transNode.manifestPath) || candidates[0];
 
-      transNode.dependentsCount++;
-      if (parentTarget) {
-        parentTarget.dependenciesCount++;
+            const edgeId = `${matchedParent.id}->${transNode.id}:transitive`;
+            if (!edgeIdSet.has(edgeId)) {
+              edgeIdSet.add(edgeId);
+              edges.push({
+                id: edgeId,
+                source: matchedParent.id,
+                target: transNode.id,
+                type: 'transitive',
+                isTransitive: true,
+                resolvedVersion: transNode.versionResolved,
+                sourceFilePath: transNode.lockfilePath || transNode.manifestPath,
+              });
+
+              matchedParent.dependenciesCount++;
+              transNode.dependentsCount++;
+            }
+          }
+          // If candidate parent node does not exist, do NOT manufacture an edge referencing non-existent nodes
+        }
       }
+      // If parentPackages is empty or unknown, do not manufacture a guessed edge to directNodes[0] or manifest!
     }
   }
 
@@ -209,9 +251,10 @@ export function buildPackageDependencyGraph(
       );
       if (targetNode) {
         const sourceRootId = `manifest:${ws.manifestPath}`;
-        if (nodes[sourceRootId]) {
+        if (nodes[sourceRootId] && nodes[targetNode.id]) {
           const edgeId = `${sourceRootId}->${targetNode.id}:workspace`;
-          if (!edges.some((e) => e.id === edgeId)) {
+          if (!edgeIdSet.has(edgeId)) {
+            edgeIdSet.add(edgeId);
             edges.push({
               id: edgeId,
               source: sourceRootId,
@@ -227,6 +270,9 @@ export function buildPackageDependencyGraph(
     }
   }
 
+  // Final verification: Assert that every graph edge references existing nodes
+  const validatedEdges = edges.filter((e) => nodes[e.source] !== undefined && nodes[e.target] !== undefined);
+
   // Count direct vs transitive nodes (excluding synthesized manifest root nodes)
   let directCount = 0;
   let transitiveCount = 0;
@@ -239,11 +285,11 @@ export function buildPackageDependencyGraph(
 
   return {
     nodes,
-    edges,
+    edges: validatedEdges,
     rootNodeIds,
     stats: {
       totalNodes: Object.keys(nodes).length,
-      totalEdges: edges.length,
+      totalEdges: validatedEdges.length,
       directCount,
       transitiveCount,
       multiVersionCount,

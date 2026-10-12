@@ -150,6 +150,7 @@ export class JvmAdapter implements EcosystemAdapter {
     manifestFile: { path: string; content: string }
   ): AdapterParseResult {
     const dependencies: NormalizedDependency[] = [];
+    const directDepMap = new Map<string, NormalizedDependency>();
     const diagnostics: ManifestDiagnostic[] = [];
     const workspaces: WorkspaceDescriptor[] = [];
     const dir = getDirname(manifestFile.path);
@@ -196,8 +197,19 @@ export class JvmAdapter implements EcosystemAdapter {
         },
       ];
 
-      dependencies.push({
-        id: `jvm:maven:${fullName}@${manifestFile.path}`,
+      const depId = `jvm:maven:${fullName}@${manifestFile.path}`;
+      const existing = directDepMap.get(depId);
+      if (existing) {
+        existing.evidence.push(...evidence);
+        if (version && !existing.versionDeclared) {
+          existing.versionDeclared = version;
+          existing.versionResolved = version?.startsWith('${') ? undefined : version;
+        }
+        continue;
+      }
+
+      const dep: NormalizedDependency = {
+        id: depId,
         ecosystem: 'jvm',
         packageManager: 'maven',
         name: fullName,
@@ -210,7 +222,10 @@ export class JvmAdapter implements EcosystemAdapter {
         workspacePath,
         evidence,
         notes: version?.startsWith('${') ? [`Version resolved via POM property: ${version}`] : undefined,
-      });
+      };
+
+      directDepMap.set(depId, dep);
+      dependencies.push(dep);
     }
 
     diagnostics.push({
@@ -233,6 +248,7 @@ export class JvmAdapter implements EcosystemAdapter {
     context: AdapterParseContext
   ): AdapterParseResult {
     const dependencies: NormalizedDependency[] = [];
+    const directDepMap = new Map<string, NormalizedDependency>();
     const diagnostics: ManifestDiagnostic[] = [];
     const dir = getDirname(manifestFile.path);
     const workspacePath = dir === '.' ? undefined : dir;
@@ -293,8 +309,22 @@ export class JvmAdapter implements EcosystemAdapter {
           });
         }
 
-        dependencies.push({
-          id: `jvm:gradle:${groupAndArtifact}@${manifestFile.path}`,
+        const depId = `jvm:gradle:${groupAndArtifact}@${manifestFile.path}`;
+        const existing = directDepMap.get(depId);
+        if (existing) {
+          existing.evidence.push(...evidence);
+          if (scope === 'runtime' && existing.scope === 'test') {
+            existing.scope = 'runtime';
+          }
+          if (declaredVersion && !existing.versionDeclared) {
+            existing.versionDeclared = declaredVersion;
+            existing.versionResolved = resolved;
+          }
+          continue;
+        }
+
+        const dep: NormalizedDependency = {
+          id: depId,
           ecosystem: 'jvm',
           packageManager: 'gradle',
           name: groupAndArtifact,
@@ -307,7 +337,10 @@ export class JvmAdapter implements EcosystemAdapter {
           lockfilePath: lockFile?.path,
           workspacePath,
           evidence,
-        });
+        };
+
+        directDepMap.set(depId, dep);
+        dependencies.push(dep);
       }
     }
 

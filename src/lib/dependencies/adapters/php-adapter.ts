@@ -125,6 +125,18 @@ export class PhpAdapter implements EcosystemAdapter {
       { key: 'require-dev', scope: 'dev' },
     ];
 
+    const scopePrecedence: Record<DependencyScope, number> = {
+      runtime: 4,
+      build: 3,
+      peer: 2,
+      dev: 1,
+      optional: 0,
+      bundled: 0,
+      test: 0,
+      unknown: 0,
+    };
+    const directDepMap = new Map<string, NormalizedDependency>();
+
     for (const { key, scope } of sections) {
       const section = json[key];
       if (section && typeof section === 'object') {
@@ -134,6 +146,23 @@ export class PhpAdapter implements EcosystemAdapter {
             continue;
           }
           const specStr = String(rawSpec);
+          const depId = `php:composer:${name.toLowerCase()}@${manifestFile.path}`;
+
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push({
+              sourceFilePath: manifestFile.path,
+              sourceKind: 'manifest',
+              evidenceKind: 'declared_only',
+              rawSpecifier: specStr,
+            });
+            if (scopePrecedence[scope] > scopePrecedence[existing.scope]) {
+              existing.scope = scope;
+              existing.versionDeclared = specStr;
+            }
+            continue;
+          }
+
           const resolved = resolvedMap.get(name.toLowerCase());
 
           const evidence: DependencyEvidence[] = [
@@ -156,8 +185,8 @@ export class PhpAdapter implements EcosystemAdapter {
             });
           }
 
-          dependencies.push({
-            id: `php:composer:${name.toLowerCase()}@${manifestFile.path}`,
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'php',
             packageManager: 'composer',
             name,
@@ -170,7 +199,10 @@ export class PhpAdapter implements EcosystemAdapter {
             lockfilePath: lockFile?.path,
             workspacePath,
             evidence,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     }

@@ -12,6 +12,7 @@ import {
   ManifestDiagnostic,
   DependencyEvidence,
   DependencyScope,
+  SCOPE_PRECEDENCE,
   PackageManagerType,
 } from '../types';
 import { getEcosystemCapability } from '../capability-matrix';
@@ -174,6 +175,7 @@ export class PythonAdapter implements EcosystemAdapter {
 
     const lines = manifestFile.content.split('\n');
     let hasPinnedExact = false;
+    const directDepMap = new Map<string, NormalizedDependency>();
 
     for (let i = 0; i < lines.length; i++) {
       const lineNum = i + 1;
@@ -275,7 +277,20 @@ export class PythonAdapter implements EcosystemAdapter {
       const depId = `python:pip:${rawName.toLowerCase()}@${manifestFile.path}`;
       const notes = markerPart ? [`Environment marker: ${markerPart}`] : undefined;
 
-      dependencies.push({
+      const existing = directDepMap.get(depId);
+      if (existing) {
+        existing.evidence.push(...evidence);
+        if (notes) {
+          if (!existing.notes) existing.notes = [];
+          existing.notes.push(...notes);
+        }
+        if (resolvedVersion && !existing.versionResolved) {
+          existing.versionResolved = resolvedVersion;
+        }
+        continue;
+      }
+
+      const dep: NormalizedDependency = {
         id: depId,
         ecosystem: 'python',
         packageManager: 'pip',
@@ -291,7 +306,10 @@ export class PythonAdapter implements EcosystemAdapter {
         evidence,
         provenance,
         notes,
-      });
+      };
+
+      directDepMap.set(depId, dep);
+      dependencies.push(dep);
     }
 
     if (!isPipCompile && !hasPinnedExact) {
@@ -390,6 +408,29 @@ export class PythonAdapter implements EcosystemAdapter {
     const poetry = tool?.poetry as Record<string, unknown> | undefined;
     const poetryDeps = poetry?.dependencies as Record<string, unknown> | undefined;
     const declaredNames = new Set<string>();
+    const directDepMap = new Map<string, NormalizedDependency>();
+
+    const addDirectDep = (dep: NormalizedDependency) => {
+      const existing = directDepMap.get(dep.id);
+      if (existing) {
+        existing.evidence.push(...dep.evidence);
+        const existingScore = SCOPE_PRECEDENCE[existing.scope] ?? 0;
+        const newScore = SCOPE_PRECEDENCE[dep.scope] ?? 0;
+        if (newScore > existingScore) {
+          existing.scope = dep.scope;
+          if (dep.versionDeclared) existing.versionDeclared = dep.versionDeclared;
+        }
+        if (!existing.versionInstalled && dep.versionInstalled) {
+          existing.versionInstalled = dep.versionInstalled;
+        }
+        if (!existing.versionResolved && dep.versionResolved) {
+          existing.versionResolved = dep.versionResolved;
+        }
+      } else {
+        directDepMap.set(dep.id, dep);
+        dependencies.push(dep);
+      }
+    };
 
     if (poetryDeps && typeof poetryDeps === 'object') {
       for (const [name, spec] of Object.entries(poetryDeps)) {
@@ -456,7 +497,7 @@ export class PythonAdapter implements EcosystemAdapter {
           }
         }
 
-        dependencies.push({
+        addDirectDep({
           id: `python:${effectivePm}:${name.toLowerCase()}@${manifestFile.path}`,
           ecosystem: 'python',
           packageManager: effectivePm,
@@ -540,8 +581,8 @@ export class PythonAdapter implements EcosystemAdapter {
           }
         }
 
-        dependencies.push({
-          id: `python:${effectivePm}:${name.toLowerCase()}:dev@${manifestFile.path}`,
+        addDirectDep({
+          id: `python:${effectivePm}:${name.toLowerCase()}@${manifestFile.path}`,
           ecosystem: 'python',
           packageManager: effectivePm,
           name,
@@ -626,7 +667,7 @@ export class PythonAdapter implements EcosystemAdapter {
             }
           }
 
-          dependencies.push({
+          addDirectDep({
             id: `python:${effectivePm}:${name.toLowerCase()}@${manifestFile.path}`,
             ecosystem: 'python',
             packageManager: effectivePm,
@@ -649,8 +690,11 @@ export class PythonAdapter implements EcosystemAdapter {
 
     // Transitive dependencies from lockfile
     if (lockFile && resolvedMap.size > 0) {
+      const seenTransitives = new Set<string>();
       for (const [name, resolved] of resolvedMap.entries()) {
-        if (!declaredNames.has(name)) {
+        const lowerName = name.toLowerCase();
+        if (!declaredNames.has(lowerName) && !seenTransitives.has(lowerName)) {
+          seenTransitives.add(lowerName);
           const installed = detectInstalledVersion(name, 'python', dir, context.getFile);
 
           const evidence: DependencyEvidence[] = [
@@ -771,11 +815,40 @@ export class PythonAdapter implements EcosystemAdapter {
       { key: 'dev-packages', scope: 'dev' },
     ];
 
+    const scopePrecedence: Record<DependencyScope, number> = {
+      runtime: 4,
+      build: 3,
+      peer: 2,
+      dev: 1,
+      optional: 0,
+      bundled: 0,
+      test: 0,
+      unknown: 0,
+    };
+    const directDepMap = new Map<string, NormalizedDependency>();
+
     for (const { key, scope } of sections) {
       const section = toml[key];
       if (section && typeof section === 'object') {
         for (const [name, spec] of Object.entries(section)) {
           const rawSpec = typeof spec === 'string' ? spec : '*';
+          const depId = `python:pipenv:${name.toLowerCase()}@${manifestFile.path}`;
+
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push({
+              sourceFilePath: manifestFile.path,
+              sourceKind: 'manifest',
+              evidenceKind: 'declared_only',
+              rawSpecifier: rawSpec,
+            });
+            if (scopePrecedence[scope] > scopePrecedence[existing.scope]) {
+              existing.scope = scope;
+              existing.versionDeclared = rawSpec;
+            }
+            continue;
+          }
+
           const resolved = resolvedMap.get(name.toLowerCase());
 
           const installed = detectInstalledVersion(name, 'python', dir, context.getFile);
@@ -831,8 +904,8 @@ export class PythonAdapter implements EcosystemAdapter {
             }
           }
 
-          dependencies.push({
-            id: `python:pipenv:${name.toLowerCase()}@${manifestFile.path}`,
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'python',
             packageManager: 'pipenv',
             name,
@@ -847,7 +920,10 @@ export class PythonAdapter implements EcosystemAdapter {
             workspacePath: dir === '.' ? undefined : dir,
             evidence,
             provenance,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     }

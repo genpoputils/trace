@@ -194,8 +194,18 @@ export class EcosystemRegistry {
     };
 
     const allDependencies: NormalizedDependency[] = [];
+    const dependenciesById = new Map<string, NormalizedDependency>();
     const allWorkspaces: WorkspaceDescriptor[] = [];
     const allDiagnostics: ManifestDiagnostic[] = [];
+
+    // Scope precedence for cross-manifest consolidation
+    const scopePrecedence: Record<string, number> = {
+      runtime: 4,
+      build: 3,
+      peer: 2,
+      dev: 1,
+      optional: 0,
+    };
 
     // Filter manifests to parse
     const manifestFiles = discoveredFiles.filter((df) => df.kind === 'manifest');
@@ -256,7 +266,46 @@ export class EcosystemRegistry {
             if (dep.provenance.installed.version && !dep.versionInstalled) {
               dep.versionInstalled = dep.provenance.installed.version;
             }
-            allDependencies.push(dep);
+
+            const existing = dependenciesById.get(dep.id);
+            if (existing) {
+              // Deduplicate and consolidate shared or duplicate dependency entries
+              if (dep.evidence) {
+                for (const ev of dep.evidence) {
+                  const alreadyHas = existing.evidence.some(
+                    (e) =>
+                      e.sourceFilePath === ev.sourceFilePath &&
+                      e.sourceKind === ev.sourceKind &&
+                      e.rawSpecifier === ev.rawSpecifier &&
+                      e.evidenceKind === ev.evidenceKind
+                  );
+                  if (!alreadyHas) {
+                    existing.evidence.push(ev);
+                  }
+                }
+              }
+              if (dep.parentPackages) {
+                const parents = new Set(existing.parentPackages || []);
+                for (const p of dep.parentPackages) parents.add(p);
+                existing.parentPackages = Array.from(parents);
+              }
+              if (dep.dependencies) {
+                const children = new Set(existing.dependencies || []);
+                for (const c of dep.dependencies) children.add(c);
+                existing.dependencies = Array.from(children);
+              }
+              const existingScore = scopePrecedence[existing.scope] ?? 0;
+              const newScore = scopePrecedence[dep.scope] ?? 0;
+              if (newScore > existingScore) {
+                existing.scope = dep.scope;
+              }
+              if (!existing.versionInstalled && dep.versionInstalled) {
+                existing.versionInstalled = dep.versionInstalled;
+              }
+            } else {
+              dependenciesById.set(dep.id, dep);
+              allDependencies.push(dep);
+            }
           }
           for (const ws of syncResult.workspaces) {
             allWorkspaces.push(ws);
@@ -344,6 +393,7 @@ export class EcosystemRegistry {
       dependencies: allDependencies,
       sourceUsages: sourceUsageResult.usagesByPackageId,
       workspaces: allWorkspaces,
+      coverage: sourceUsageResult.coverage,
     });
 
     return {
@@ -355,6 +405,7 @@ export class EcosystemRegistry {
       diagnostics: allDiagnostics,
       graph,
       sourceUsages: sourceUsageResult.usagesByPackageId,
+      coverage: sourceUsageResult.coverage,
       stats: {
         totalManifests: manifestFiles.length,
         totalLockfiles: lockfileCount,

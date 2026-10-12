@@ -99,6 +99,7 @@ export class GoAdapter implements EcosystemAdapter {
 
     const lines = manifestFile.content.split('\n');
     let inRequireBlock = false;
+    const directDepMap = new Map<string, NormalizedDependency>();
 
     for (let i = 0; i < lines.length; i++) {
       const lineNum = i + 1;
@@ -173,8 +174,20 @@ export class GoAdapter implements EcosystemAdapter {
             getFile: context.getFile,
           });
 
-          dependencies.push({
-            id: `go:gomod:${modulePath}@${manifestFile.path}`,
+          const depId = `go:gomod:${modulePath}@${manifestFile.path}`;
+          const existing = directDepMap.get(depId);
+          if (existing) {
+            existing.evidence.push(...evidence);
+            if (isDirect && !existing.isDirect) {
+              existing.isDirect = true;
+              existing.isTransitive = false;
+              existing.versionDeclared = version;
+            }
+            continue;
+          }
+
+          const dep: NormalizedDependency = {
+            id: depId,
             ecosystem: 'go',
             packageManager: 'gomod',
             name: modulePath,
@@ -190,7 +203,10 @@ export class GoAdapter implements EcosystemAdapter {
             evidence,
             provenance,
             notes: isIndirect ? ['Indirect dependency (required transitively)'] : undefined,
-          });
+          };
+
+          directDepMap.set(depId, dep);
+          dependencies.push(dep);
         }
       }
     }
