@@ -4,6 +4,11 @@
  */
 
 import { WorkspaceTabId } from '@/components/layout/AppNavigationRail';
+import { ProjectAnalysis, AnalysisWarning } from '../types/trace';
+
+export type ProjectAnalysisQualityInput = Omit<ProjectAnalysis, 'warnings'> & {
+  warnings?: AnalysisWarning[];
+};
 
 export type QualityStatus = 'complete' | 'partial' | 'degraded' | 'unknown';
 

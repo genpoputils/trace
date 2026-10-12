@@ -3,12 +3,13 @@
  * GenPopUtils Trace — Visual Codebase Intelligence Platform
  */
 
-import { ProjectAnalysis, TraceEntity } from '../types/trace';
+import { TraceEntity } from '../types/trace';
 import {
   AnalysisQualityReport,
   AnalysisDiagnostic,
   QualityStatus,
   QualityNavigationTarget,
+  ProjectAnalysisQualityInput,
 } from './analysis-quality-types';
 
 interface QualityCacheEntry {
@@ -22,7 +23,7 @@ export function clearQualityCache(): void {
   activeQualityCache = null;
 }
 
-function getCacheKey(analysis: ProjectAnalysis): string {
+function getCacheKey(analysis: ProjectAnalysisQualityInput): string {
   const commit = analysis.gitMetadata?.commitSha || 'local';
   const analyzedAt = analysis.analyzedAt || '0';
   const entityCount = Object.keys(analysis.entities || {}).length;
@@ -43,7 +44,7 @@ function isSupportedSourceFile(filePath: string): boolean {
  * Pure derivation engine to calculate analysis quality, coverage metrics, and structured diagnostics
  */
 export function deriveAnalysisQuality(
-  analysis: ProjectAnalysis | null | undefined
+  analysis: ProjectAnalysisQualityInput | null | undefined
 ): AnalysisQualityReport {
   // 1. Handle empty, null, or uninitialized analysis
   if (!analysis) {

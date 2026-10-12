@@ -5,6 +5,7 @@ import {
   deriveAnalysisQuality,
   clearQualityCache,
 } from '../src/lib/quality/analysis-quality-service';
+import { ProjectAnalysisQualityInput } from '../src/lib/quality/analysis-quality-types';
 
 function createBaseAnalysis(overrides?: Partial<ProjectAnalysis>): ProjectAnalysis {
   return {
@@ -284,7 +285,8 @@ describe('Analysis Quality, Coverage & Trust Derivation Unit Suite', () => {
 
     // Case B: Undefined warnings (metadata unavailable)
     clearQualityCache();
-    const analysisMissing = createBaseAnalysis({ warnings: undefined as any });
+    const analysisMissing: ProjectAnalysisQualityInput = { ...createBaseAnalysis() };
+    delete analysisMissing.warnings;
     const reportMissing = deriveAnalysisQuality(analysisMissing);
     assert.strictEqual(reportMissing.coverage.warningsCount.isKnown, false);
     assert.strictEqual(reportMissing.isCompleteDiagnosticSet, false);
