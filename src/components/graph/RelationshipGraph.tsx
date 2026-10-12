@@ -31,6 +31,10 @@ import {
   Route,
   LayoutGrid,
   Anchor,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Maximize2,
+  RotateCcw,
 } from 'lucide-react';
 
 interface RelationshipGraphProps {
@@ -44,7 +48,11 @@ interface RelationshipGraphProps {
 interface CustomTraceNodeData {
   entity: TraceEntity;
   onExpand?: (entityId: string) => void;
+  onExpandCallers?: (entityId: string) => void;
+  onExpandCallees?: (entityId: string) => void;
   neighborCount?: number;
+  callerCount?: number;
+  calleeCount?: number;
   isExpanded?: boolean;
 }
 
@@ -52,7 +60,11 @@ interface CustomTraceNodeData {
 function CustomTraceNode({ data, selected }: { data: CustomTraceNodeData; selected?: boolean }) {
   const entity: TraceEntity = data.entity;
   const onExpand = data.onExpand;
+  const onExpandCallers = data.onExpandCallers;
+  const onExpandCallees = data.onExpandCallees;
   const neighborCount = data.neighborCount || 0;
+  const callerCount = data.callerCount || 0;
+  const calleeCount = data.calleeCount || 0;
   const isExpanded = data.isExpanded || false;
 
   const getIcon = () => {
@@ -98,30 +110,50 @@ function CustomTraceNode({ data, selected }: { data: CustomTraceNodeData; select
       </div>
       <div
         className="trace-node-footer"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}
       >
-        <span>Line {entity.location.startLine}</span>
-        {neighborCount > 0 && onExpand && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onExpand(entity.id);
-            }}
-            style={{
-              background: isExpanded ? 'var(--blue-selection-bg)' : 'var(--bg-tertiary)',
-              border: '1px solid var(--border-color)',
-              borderRadius: 3,
-              fontSize: 10,
-              padding: '1px 5px',
-              cursor: 'pointer',
-              color: isExpanded ? 'var(--primary-blue)' : 'var(--text-secondary)',
-              fontWeight: 500,
-            }}
-            title={isExpanded ? 'Collapse connections' : 'Expand direct connections'}
-          >
-            {isExpanded ? '− Collapse' : `+ Expand (${neighborCount})`}
-          </button>
-        )}
+        <span>L{entity.location.startLine}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          {callerCount > 0 && onExpandCallers && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExpandCallers(entity.id);
+              }}
+              className="node-mini-btn"
+              title={`Expand ${callerCount} incoming caller(s)`}
+              aria-label={`Expand ${callerCount} callers`}
+            >
+              <ArrowDownLeft size={9} /> {callerCount}
+            </button>
+          )}
+          {calleeCount > 0 && onExpandCallees && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExpandCallees(entity.id);
+              }}
+              className="node-mini-btn"
+              title={`Expand ${calleeCount} outgoing callee(s)`}
+              aria-label={`Expand ${calleeCount} callees`}
+            >
+              <ArrowUpRight size={9} /> {calleeCount}
+            </button>
+          )}
+          {neighborCount > 0 && onExpand && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExpand(entity.id);
+              }}
+              className={`node-expand-btn ${isExpanded ? 'active' : ''}`}
+              title={isExpanded ? 'Collapse connections' : 'Expand all connections'}
+              aria-label={isExpanded ? 'Collapse connections' : 'Expand all connections'}
+            >
+              {isExpanded ? '−' : `+ ${neighborCount}`}
+            </button>
+          )}
+        </div>
       </div>
       <Handle
         type="source"
@@ -181,11 +213,16 @@ function RelationshipGraphContent({
   const { fitView } = useReactFlow();
   const lastTopologyKeyRef = useRef<string>('');
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
+  const [expandedCallerIds, setExpandedCallerIds] = useState<Set<string>>(new Set());
+  const [expandedCalleeIds, setExpandedCalleeIds] = useState<Set<string>>(new Set());
+
   // Reset expanded nodes when switching projects
   const [prevProjectId, setPrevProjectId] = useState(analysis.projectId);
   if (prevProjectId !== analysis.projectId) {
     setPrevProjectId(analysis.projectId);
     setExpandedNodeIds(new Set());
+    setExpandedCallerIds(new Set());
+    setExpandedCalleeIds(new Set());
   }
 
   const toggleExpandNode = useCallback((entityId: string) => {
@@ -200,18 +237,58 @@ function RelationshipGraphContent({
     });
   }, []);
 
+  const toggleExpandCallers = useCallback((entityId: string) => {
+    setExpandedCallerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entityId)) {
+        next.delete(entityId);
+      } else {
+        next.add(entityId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleExpandCallees = useCallback((entityId: string) => {
+    setExpandedCalleeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entityId)) {
+        next.delete(entityId);
+      } else {
+        next.add(entityId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleResetGraph = useCallback(() => {
+    setExpandedNodeIds(new Set());
+    setExpandedCallerIds(new Set());
+    setExpandedCalleeIds(new Set());
+  }, []);
+
   // Compute degree connectivity for all entities
-  const neighborCounts = useMemo(() => {
+  const { neighborCounts, callerCounts, calleeCounts } = useMemo(() => {
     const counts = new Map<string, number>();
+    const callers = new Map<string, number>();
+    const callees = new Map<string, number>();
+
     for (const rel of analysis.relationships) {
       counts.set(rel.sourceId, (counts.get(rel.sourceId) || 0) + 1);
       counts.set(rel.targetId, (counts.get(rel.targetId) || 0) + 1);
+
+      callees.set(rel.sourceId, (callees.get(rel.sourceId) || 0) + 1);
+      callers.set(rel.targetId, (callers.get(rel.targetId) || 0) + 1);
     }
-    return counts;
+    return { neighborCounts: counts, callerCounts: callers, calleeCounts: callees };
   }, [analysis.relationships]);
 
+  const totalNonFileSymbols = useMemo(() => {
+    return Object.values(analysis.entities).filter((e) => e.kind !== 'file').length;
+  }, [analysis.entities]);
+
   // Build topology and calculate Dagre layout WITHOUT selectedEntityId
-  const { layoutedNodes, layoutedEdges, topologyKey } = useMemo(() => {
+  const { layoutedNodes, layoutedEdges, topologyKey, visibleCount } = useMemo(() => {
     let candidateEntities: TraceEntity[] = [];
 
     if (focusEntityId && analysis.entities[focusEntityId]) {
@@ -239,6 +316,22 @@ function RelationshipGraphContent({
           topHubIds.add(e.id);
           routeCount++;
           if (routeCount >= 5) break;
+        }
+      }
+
+      // Add user-expanded callers (incoming)
+      for (const cId of expandedCallerIds) {
+        topHubIds.add(cId);
+        for (const rel of analysis.relationships) {
+          if (rel.targetId === cId) topHubIds.add(rel.sourceId);
+        }
+      }
+
+      // Add user-expanded callees (outgoing)
+      for (const cId of expandedCalleeIds) {
+        topHubIds.add(cId);
+        for (const rel of analysis.relationships) {
+          if (rel.sourceId === cId) topHubIds.add(rel.targetId);
         }
       }
 
@@ -272,8 +365,12 @@ function RelationshipGraphContent({
       data: {
         entity,
         neighborCount: neighborCounts.get(entity.id) || 0,
+        callerCount: callerCounts.get(entity.id) || 0,
+        calleeCount: calleeCounts.get(entity.id) || 0,
         isExpanded: expandedNodeIds.has(entity.id),
         onExpand: toggleExpandNode,
+        onExpandCallers: toggleExpandCallers,
+        onExpandCallees: toggleExpandCallees,
       },
       position: { x: 0, y: 0 },
     }));
@@ -312,8 +409,22 @@ function RelationshipGraphContent({
       layoutedNodes: layoutResult.nodes,
       layoutedEdges: layoutResult.edges,
       topologyKey: topoKey,
+      visibleCount: candidateEntities.length,
     };
-  }, [analysis, filterKinds, focusEntityId, expandedNodeIds, neighborCounts, toggleExpandNode]);
+  }, [
+    analysis,
+    filterKinds,
+    focusEntityId,
+    expandedNodeIds,
+    expandedCallerIds,
+    expandedCalleeIds,
+    neighborCounts,
+    callerCounts,
+    calleeCounts,
+    toggleExpandNode,
+    toggleExpandCallers,
+    toggleExpandCallees,
+  ]);
 
   // Apply selection highlights without recalculating Dagre positions
   const styledNodes = useMemo(() => {
@@ -324,9 +435,11 @@ function RelationshipGraphContent({
         ...n.data,
         isExpanded: expandedNodeIds.has(n.id),
         onExpand: toggleExpandNode,
+        onExpandCallers: toggleExpandCallers,
+        onExpandCallees: toggleExpandCallees,
       },
     }));
-  }, [layoutedNodes, selectedEntityId, expandedNodeIds, toggleExpandNode]);
+  }, [layoutedNodes, selectedEntityId, expandedNodeIds, toggleExpandNode, toggleExpandCallers, toggleExpandCallees]);
 
   const styledEdges = useMemo(() => {
     return layoutedEdges.map((e) => {
@@ -377,8 +490,64 @@ function RelationshipGraphContent({
     [onSelectEntity]
   );
 
+  const selectedEntity = selectedEntityId ? analysis.entities[selectedEntityId] : null;
+  const hasExpansions = expandedNodeIds.size > 0 || expandedCallerIds.size > 0 || expandedCalleeIds.size > 0;
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {/* GRAPH SCOPE OVERLAY */}
+      <div className="graph-scope-bar" role="region" aria-label="Graph scope">
+        <div className="scope-count-badge" title="Visible nodes vs total symbols in repository">
+          <Layers size={12} color="var(--primary-blue)" />
+          <span>
+            Showing <strong>{visibleCount}</strong> of <strong>{totalNonFileSymbols}</strong> available nodes
+          </span>
+        </div>
+
+        {selectedEntity && (
+          <div className="scope-selection-actions">
+            <span className="selected-node-title" title={selectedEntity.name}>
+              {selectedEntity.name}
+            </span>
+            <button
+              onClick={() => toggleExpandCallers(selectedEntity.id)}
+              className="scope-action-btn"
+              title={`Expand incoming callers for ${selectedEntity.name}`}
+              aria-label="Expand callers"
+            >
+              <ArrowDownLeft size={11} /> + Callers ({callerCounts.get(selectedEntity.id) || 0})
+            </button>
+            <button
+              onClick={() => toggleExpandCallees(selectedEntity.id)}
+              className="scope-action-btn"
+              title={`Expand outgoing callees for ${selectedEntity.name}`}
+              aria-label="Expand callees"
+            >
+              <ArrowUpRight size={11} /> + Callees ({calleeCounts.get(selectedEntity.id) || 0})
+            </button>
+            <button
+              onClick={() => toggleExpandNode(selectedEntity.id)}
+              className="scope-action-btn"
+              title="Expand all direct connections"
+              aria-label="Expand all"
+            >
+              <Maximize2 size={11} /> {expandedNodeIds.has(selectedEntity.id) ? 'Collapse' : 'Expand all'}
+            </button>
+          </div>
+        )}
+
+        {hasExpansions && (
+          <button
+            onClick={handleResetGraph}
+            className="scope-action-btn reset-btn"
+            title="Reset to default initial graph layout"
+            aria-label="Reset graph"
+          >
+            <RotateCcw size={11} /> Reset
+          </button>
+        )}
+      </div>
+
       <ReactFlow
         nodes={nodes}
         edges={edges}

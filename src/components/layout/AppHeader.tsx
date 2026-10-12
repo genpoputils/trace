@@ -10,7 +10,13 @@ import {
   GitCommit,
   Sun,
   Moon,
+  RefreshCw,
+  AlertTriangle,
+  XCircle,
+  StopCircle,
 } from 'lucide-react';
+import { browserAnalysisService } from '@/lib/services/browser-analysis-service';
+
 
 import { ProjectSummary } from '@/lib/storage/local-project-store';
 
@@ -49,6 +55,12 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onOpenUploadModal,
   onToggleTheme,
 }) => {
+  const [session, setSession] = React.useState(() => browserAnalysisService.getSessionState());
+
+  React.useEffect(() => {
+    return browserAnalysisService.subscribe(setSession);
+  }, []);
+
   const gitMeta = analysis?.gitMetadata;
   const repoName = gitMeta ? `${gitMeta.owner}/${gitMeta.repo}` : analysis?.projectName || '';
   const branchName = gitMeta?.branch || 'main';
@@ -67,23 +79,49 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         </div>
 
         {/* Repository breadcrumb & Git metadata */}
-        {analysis && (
+        {(analysis || session.status === 'running') && (
           <div className="header-breadcrumb">
-            <span className="breadcrumb-repo" title={repoName}>
-              {repoName}
+            <span className="breadcrumb-repo" title={repoName || session.projectName}>
+              {repoName || session.projectName}
             </span>
-            <span style={{ color: 'var(--text-muted)' }} aria-hidden="true">/</span>
-            <span className="branch-pill" title={`Active Branch: ${branchName}`}>
-              <GitBranch size={11} color="var(--text-secondary)" /> {branchName}
-            </span>
+            {branchName && (
+              <>
+                <span style={{ color: 'var(--text-muted)' }} aria-hidden="true">/</span>
+                <span className="branch-pill" title={`Active Branch: ${branchName}`}>
+                  <GitBranch size={11} color="var(--text-secondary)" /> {branchName}
+                </span>
+              </>
+            )}
             {commitShortSha && (
               <span className="commit-pill" title={`Analyzed Git Commit: ${gitMeta?.commitSha}`}>
                 <GitCommit size={11} /> {commitShortSha}
               </span>
             )}
+            {/* Live Session Status Badge */}
+            {session.status === 'running' && (
+              <span className="analysis-status-pill running header-pill" title={`Analysis in progress: ${session.progress.message}`}>
+                <RefreshCw size={10} className="animate-spin" /> Analyzing
+              </span>
+            )}
+            {session.status === 'partial' && (
+              <span className="analysis-status-pill partial header-pill" title="Analysis completed with limitations">
+                <AlertTriangle size={10} /> Partial
+              </span>
+            )}
+            {session.status === 'failed' && (
+              <span className="analysis-status-pill failed header-pill" title="Analysis encountered errors">
+                <XCircle size={10} /> Failed
+              </span>
+            )}
+            {session.status === 'cancelled' && (
+              <span className="analysis-status-pill cancelled header-pill" title="Analysis was cancelled">
+                <StopCircle size={10} /> Cancelled
+              </span>
+            )}
           </div>
         )}
       </div>
+
 
       {/* Header Actions & Controls */}
       <div className="header-controls">

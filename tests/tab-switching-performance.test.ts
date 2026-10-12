@@ -69,7 +69,9 @@ describe('Tab Switching Responsiveness & Caching Suite', () => {
 
     // The optimized pattern: build map once
     const fileSymbolsMap = new Map<string, TraceEntity[]>();
-    for (const entity of Object.values(largeMockProject.entities)) {
+    const entities = largeMockProject.entities;
+    for (const id in entities) {
+      const entity = entities[id];
       if (entity.kind === 'file') continue;
       const list = fileSymbolsMap.get(entity.filePath);
       if (list) {
@@ -79,6 +81,7 @@ describe('Tab Switching Responsiveness & Caching Suite', () => {
       }
     }
     const tIndex = performance.now() - t0;
+
 
     // Index creation on 10,000 entities takes < 15ms
     assert.ok(tIndex < 35, `Index building took too long: ${tIndex}ms`);

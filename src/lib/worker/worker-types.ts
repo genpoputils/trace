@@ -14,7 +14,12 @@ export type WorkerRequest =
       id: string;
       projectName: string;
       files: Record<string, FileRecord>;
+    }
+  | {
+      type: 'CANCEL';
+      id: string;
     };
+
 
 export interface WorkerProgressMessage {
   type: 'PROGRESS';

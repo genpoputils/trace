@@ -37,6 +37,7 @@ export interface FetchRepoOptions {
   maxFiles?: number;
   maxFileSize?: number;
   maxTotalSize?: number;
+  signal?: AbortSignal;
   onProgress?: (stage: string, progress: { current: number; total: number; message: string }) => void;
 }
 
@@ -57,12 +58,13 @@ export function decodeBase64Utf8(base64Str: string): string {
 }
 
 /**
- * Bounded concurrency executor for async tasks.
+ * Bounded concurrency executor for async tasks with AbortSignal cancellation support.
  */
 export async function pMap<T, R>(
   items: T[],
   mapper: (item: T, index: number) => Promise<R>,
-  concurrency: number
+  concurrency: number,
+  signal?: AbortSignal
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
@@ -70,6 +72,9 @@ export async function pMap<T, R>(
   const poolSize = Math.max(1, Math.min(concurrency, items.length));
   const workers = new Array(poolSize).fill(null).map(async () => {
     while (nextIndex < items.length) {
+      if (signal?.aborted) {
+        throw new Error('Analysis cancelled by user.');
+      }
       const index = nextIndex++;
       results[index] = await mapper(items[index], index);
     }
@@ -78,6 +83,7 @@ export async function pMap<T, R>(
   await Promise.all(workers);
   return results;
 }
+
 
 export class BrowserGitHubClient {
   public getAuthStatus(userToken?: string): GitHubAuthStatus {
@@ -396,11 +402,16 @@ export class BrowserGitHubClient {
     let totalExtractedBytes = 0;
     let sizeLimitReached = false;
 
+    if (options.signal?.aborted) {
+      throw new Error('Analysis cancelled by user.');
+    }
+
     // Concurrency-limited downloading
     await pMap(
       eligibleItems,
       async (item) => {
-        if (sizeLimitReached) return;
+        if (sizeLimitReached || options.signal?.aborted) return;
+
 
         let content = '';
         try {
@@ -471,8 +482,10 @@ export class BrowserGitHubClient {
           message: `Downloaded ${downloadedCount} / ${totalEligible} files (${item.path})...`,
         });
       },
-      concurrency
+      concurrency,
+      options.signal
     );
+
 
     if (totalEligible > 0 && Object.keys(files).length === 0) {
       const firstSkipped = skippedFiles.find((s) => s.reason.startsWith('Failed to download'));

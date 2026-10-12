@@ -6,6 +6,10 @@ import {
   ImpactReport,
   SearchResult,
   SearchQuery,
+  AnalysisLifecycleState,
+  AnalysisStageProgress,
+  AnalysisErrorDetails,
+  AnalysisPerformanceMetrics,
 } from '../types/trace';
 import { IngestionOptions, ZipIngestionService } from '../ingestion/zip-ingestion';
 import { CodebaseAnalyzer } from '../analyzer/codebase-analyzer';
@@ -31,6 +35,29 @@ export interface AnalysisWorkerLike {
   onmessageerror?: ((event: unknown) => void) | null;
 }
 
+export interface AnalysisSessionState {
+  status: AnalysisLifecycleState;
+  sessionId: string | null;
+  projectName: string;
+  currentStage: string;
+  progress: {
+    current: number;
+    total: number;
+    message: string;
+  };
+  stages: AnalysisStageProgress[];
+  isPartial: boolean;
+  partialReason?: string;
+  error: AnalysisErrorDetails | null;
+  startTime: number;
+  elapsedMs: number;
+  totalDurationMs?: number;
+  performanceMetrics?: AnalysisPerformanceMetrics;
+  projectId?: string;
+  canCancel: boolean;
+  canRetry: boolean;
+}
+
 export class BrowserAnalysisService {
   private worker: Worker | AnalysisWorkerLike | null = null;
   private workerAvailable: boolean = false;
@@ -47,6 +74,32 @@ export class BrowserAnalysisService {
     }
   > = new Map();
 
+  // Session & Stale Analysis Protection
+  private activeSessionId: string | null = null;
+  private activeAbortController: AbortController | null = null;
+  private currentJobId: string | null = null;
+  private lastAnalysisParams:
+    | { type: 'zip'; data: File | ArrayBuffer | Uint8Array; fileName: string; options: IngestionOptions }
+    | { type: 'github'; owner: string; repo: string; branch: string; token?: string }
+    | null = null;
+
+  private sessionState: AnalysisSessionState = {
+    status: 'idle',
+    sessionId: null,
+    projectName: '',
+    currentStage: '',
+    progress: { current: 0, total: 0, message: 'Ready to analyse a codebase' },
+    stages: [],
+    isPartial: false,
+    error: null,
+    startTime: 0,
+    elapsedMs: 0,
+    canCancel: false,
+    canRetry: false,
+  };
+
+  private listeners: Set<(state: AnalysisSessionState) => void> = new Set();
+
   // Fast in-memory caches to preserve < 0.1ms tab switching performance
   private traceCache: Map<string, ExecutionPath> = new Map();
   private impactCache: Map<string, ImpactReport> = new Map();
@@ -54,6 +107,38 @@ export class BrowserAnalysisService {
 
   constructor() {
     this.initWorker();
+  }
+
+  public subscribe(listener: (state: AnalysisSessionState) => void): () => void {
+    this.listeners.add(listener);
+    try {
+      listener(this.sessionState);
+    } catch (e) {
+      console.error('Error invoking analysis session listener:', e);
+    }
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  public getSessionState(): AnalysisSessionState {
+    return this.sessionState;
+  }
+
+  private notify(partial: Partial<AnalysisSessionState>) {
+    this.sessionState = {
+      ...this.sessionState,
+      ...partial,
+      elapsedMs:
+        this.sessionState.startTime > 0 ? Math.round(performance.now() - this.sessionState.startTime) : 0,
+    };
+    for (const listener of this.listeners) {
+      try {
+        listener(this.sessionState);
+      } catch (err) {
+        console.error('Trace: session listener threw error:', err);
+      }
+    }
   }
 
   private failAllPendingJobs(error: Error) {
@@ -161,6 +246,84 @@ export class BrowserAnalysisService {
   }
 
   /**
+   * User or system cancellation of active analysis session
+   */
+  public cancelActiveAnalysis(reason: string = 'Analysis cancelled by user.'): void {
+    if (!this.activeSessionId && this.sessionState.status !== 'running') {
+      return;
+    }
+
+    this.activeSessionId = null;
+
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {}
+      this.activeAbortController = null;
+    }
+
+    const jobToCancel = this.currentJobId;
+    this.currentJobId = null;
+
+    if (this.worker) {
+      // 1. Send cooperative CANCEL message
+      if (jobToCancel) {
+        try {
+          this.worker.postMessage({ type: 'CANCEL', id: jobToCancel });
+        } catch {}
+      }
+      // 2. In browser environments, terminate the worker immediately to stop runaway CPU execution
+      if (typeof Worker !== 'undefined' && this.worker instanceof Worker) {
+        try {
+          this.worker.terminate();
+        } catch {}
+        this.worker = null;
+        this.workerAvailable = false;
+        // Reinitialize fresh worker for subsequent operations
+        this.initWorker();
+      }
+    }
+
+    this.failAllPendingJobs(new Error(reason));
+
+    const updatedStages = this.sessionState.stages.map((s) => {
+      if (s.status === 'running') {
+        return { ...s, status: 'failed' as const, message: 'Cancelled' };
+      }
+      return s;
+    });
+
+    this.notify({
+      status: 'cancelled',
+      currentStage: 'cancelled',
+      canCancel: false,
+      canRetry: !!this.lastAnalysisParams,
+      progress: {
+        current: this.sessionState.progress.current,
+        total: this.sessionState.progress.total,
+        message: reason,
+      },
+      stages: updatedStages,
+    });
+  }
+
+  public canRetry(): boolean {
+    return !!this.lastAnalysisParams && this.sessionState.status !== 'running';
+  }
+
+  public async retryLastAnalysis(): Promise<{ projectId: string; analysis: ProjectAnalysis } | null> {
+    if (!this.lastAnalysisParams) return null;
+    if (this.lastAnalysisParams.type === 'github') {
+      const { owner, repo, branch, token } = this.lastAnalysisParams;
+      return this.importGitHubRepo(owner, repo, branch, token);
+    } else if (this.lastAnalysisParams.type === 'zip') {
+      const { data, fileName, options } = this.lastAnalysisParams;
+      return this.importZipArchive(data, fileName, options);
+    }
+    return null;
+  }
+
+  /**
    * Run decompression and AST parsing via Web Worker or fallback to main thread
    */
   public async importZipArchive(
@@ -174,85 +337,255 @@ export class BrowserAnalysisService {
     skippedFiles: { path: string; reason: string }[];
     warnings: string[];
   }> {
-    let arrayBuffer: ArrayBuffer;
-    if (data instanceof ArrayBuffer) {
-      arrayBuffer = data;
-    } else if (data instanceof Uint8Array) {
-      arrayBuffer = data.buffer as ArrayBuffer;
-    } else {
-      arrayBuffer = await data.arrayBuffer();
+    // Generate new unique session ID
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.activeSessionId = sessionId;
+
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {}
     }
+    this.activeAbortController = new AbortController();
 
-    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.lastAnalysisParams = { type: 'zip', data, fileName, options };
 
-    let result: {
-      analysis: ProjectAnalysis;
-      skippedFiles: { path: string; reason: string }[];
-      warnings: string[];
+    // Standard stages for ZIP analysis
+    const initialStages: AnalysisStageProgress[] = [
+      { id: 'extracting', name: 'Decompress archive', status: 'running' },
+      { id: 'parsing', name: 'Syntax & AST parsing', status: 'pending' },
+      { id: 'resolving', name: 'Cross-module resolution', status: 'pending' },
+      { id: 'centrality', name: 'Graph metrics & centrality', status: 'pending' },
+      { id: 'dependencies', name: 'Dependency intelligence', status: 'pending' },
+      { id: 'finalisation', name: 'Finalising & indexing', status: 'pending' },
+    ];
+
+    const sessionStartTime = performance.now();
+    this.notify({
+      status: 'running',
+      sessionId,
+      projectName: fileName.replace(/\.zip$/i, ''),
+      currentStage: 'extracting',
+      progress: { current: 0, total: 100, message: 'Extracting archive contents...' },
+      stages: initialStages,
+      isPartial: false,
+      error: null,
+      startTime: sessionStartTime,
+      canCancel: true,
+      canRetry: false,
+    });
+
+    const updateStageProgress = (
+      stageId: string,
+      prog: { current: number; total: number; message: string }
+    ) => {
+      if (this.activeSessionId !== sessionId) return;
+      onProgress?.(stageId, prog);
+
+      const stages = this.sessionState.stages.map((s) => {
+        const currentIndex = initialStages.findIndex((x) => x.id === stageId);
+        const thisIndex = initialStages.findIndex((x) => x.id === s.id);
+        if (s.id === stageId) {
+          return { ...s, status: 'running' as const, current: prog.current, total: prog.total, message: prog.message };
+        }
+        if (thisIndex < currentIndex) {
+          return { ...s, status: 'completed' as const };
+        }
+        if (thisIndex > currentIndex) {
+          return { ...s, status: 'pending' as const };
+        }
+        return s;
+      });
+
+      this.notify({
+        currentStage: stageId,
+        progress: prog,
+        stages,
+      });
     };
 
-    if (this.workerAvailable && this.worker) {
-      result = await new Promise((resolve, reject) => {
-        this.activeJobs.set(jobId, { resolve, reject, onProgress });
-        const req: WorkerRequest = {
-          type: 'ANALYZE_ZIP',
-          id: jobId,
-          buffer: arrayBuffer,
-          fileName,
-          options,
-        };
-        try {
-          // Transfer ArrayBuffer for zero-copy high performance
-          this.worker!.postMessage(req, [arrayBuffer]);
-        } catch (postErr) {
-          this.activeJobs.delete(jobId);
-          reject(postErr instanceof Error ? postErr : new Error(String(postErr)));
-        }
-      });
-    } else {
-      // Main-thread fallback (Node tests or restricted environments)
-      onProgress?.('extracting', {
-        current: 10,
-        total: 100,
-        message: 'Decompressing archive contents...',
-      });
-      const zipService = new ZipIngestionService();
-      const ingestion = await zipService.ingestZip(arrayBuffer, fileName, options);
-
-      const fileCount = Object.keys(ingestion.files).length;
-      if (fileCount === 0) {
-        throw new Error('No supported JavaScript or TypeScript source files found in the archive.');
+    try {
+      let arrayBuffer: ArrayBuffer;
+      if (data instanceof ArrayBuffer) {
+        arrayBuffer = data;
+      } else if (data instanceof Uint8Array) {
+        arrayBuffer = data.buffer as ArrayBuffer;
+      } else {
+        arrayBuffer = await data.arrayBuffer();
       }
 
-      onProgress?.('parsing', {
-        current: 0,
-        total: fileCount,
-        message: `Extracted ${fileCount} files. Parsing AST...`,
+      if (this.activeSessionId !== sessionId) {
+        throw new Error('Analysis cancelled by user.');
+      }
+
+      const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      this.currentJobId = jobId;
+
+      let result: {
+        analysis: ProjectAnalysis;
+        skippedFiles: { path: string; reason: string }[];
+        warnings: string[];
+      };
+
+      if (!this.worker && typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+        this.initWorker();
+      }
+
+      if (this.workerAvailable && this.worker) {
+        result = await new Promise((resolve, reject) => {
+          this.activeJobs.set(jobId, {
+            resolve,
+            reject,
+            onProgress: (stage, prog) => updateStageProgress(stage, prog),
+          });
+          const req: WorkerRequest = {
+            type: 'ANALYZE_ZIP',
+            id: jobId,
+            buffer: arrayBuffer,
+            fileName,
+            options,
+          };
+          try {
+            // Transfer ArrayBuffer for zero-copy high performance
+            this.worker!.postMessage(req, [arrayBuffer]);
+          } catch (postErr) {
+            this.activeJobs.delete(jobId);
+            reject(postErr instanceof Error ? postErr : new Error(String(postErr)));
+          }
+        });
+      } else {
+        // Main-thread fallback (Node tests or restricted environments)
+        updateStageProgress('extracting', {
+          current: 10,
+          total: 100,
+          message: 'Decompressing archive contents...',
+        });
+        const zipService = new ZipIngestionService();
+        const ingestion = await zipService.ingestZip(arrayBuffer, fileName, options);
+
+        if (this.activeSessionId !== sessionId) {
+          throw new Error('Analysis cancelled by user.');
+        }
+
+        const fileCount = Object.keys(ingestion.files).length;
+        if (fileCount === 0) {
+          throw new Error('No supported JavaScript or TypeScript source files found in the archive.');
+        }
+
+        updateStageProgress('parsing', {
+          current: 0,
+          total: fileCount,
+          message: `Extracted ${fileCount} files. Parsing AST...`,
+        });
+
+        const analyzer = new CodebaseAnalyzer();
+        const analysis = await analyzer.analyzeProjectAsync(
+          ingestion.projectName,
+          ingestion.files,
+          (stage, prog) => updateStageProgress(stage, prog),
+          { signal: this.activeAbortController?.signal }
+        );
+
+        result = {
+          analysis,
+          skippedFiles: ingestion.skippedFiles,
+          warnings: [...ingestion.warnings, ...analysis.warnings.map((w) => w.message)],
+        };
+      }
+
+      // Check stale session ID before writing to store
+      if (this.activeSessionId !== sessionId) {
+        throw new Error('Analysis superseded by a newer session.');
+      }
+
+      updateStageProgress('finalisation', {
+        current: 100,
+        total: 100,
+        message: 'Persisting analysis to local store...',
       });
 
-      const analyzer = new CodebaseAnalyzer();
-      const analysis = analyzer.analyzeProject(
-        ingestion.projectName,
-        ingestion.files,
-        (stage, prog) => onProgress?.(stage, prog)
+      result.analysis.skippedFiles = result.skippedFiles;
+      await localProjectStore.saveProject(result.analysis);
+
+      const totalDuration = Math.round(performance.now() - sessionStartTime);
+      const isPartial = Boolean(
+        result.analysis.isPartial ||
+        result.skippedFiles.length > 0 ||
+        result.warnings.some((w) => w.toLowerCase().includes('error'))
       );
 
-      result = {
-        analysis,
-        skippedFiles: ingestion.skippedFiles,
-        warnings: [...ingestion.warnings, ...analysis.warnings.map((w) => w.message)],
+      const partialReason = isPartial
+        ? result.analysis.partialReason ||
+          `${result.skippedFiles.length} file(s) skipped or excluded during analysis.`
+        : undefined;
+
+      const completedStages = this.sessionState.stages.map((s) => ({
+        ...s,
+        status: 'completed' as const,
+      }));
+
+      this.notify({
+        status: isPartial ? 'partial' : 'completed',
+        currentStage: 'completed',
+        isPartial,
+        partialReason,
+        projectId: result.analysis.projectId,
+        totalDurationMs: totalDuration,
+        performanceMetrics: result.analysis.analysisMetadata,
+        canCancel: false,
+        canRetry: false,
+        progress: {
+          current: result.analysis.stats.totalFiles,
+          total: result.analysis.stats.totalFiles,
+          message: `Analysis completed in ${(totalDuration / 100).toFixed(1)}s. ${result.analysis.stats.totalSymbols} symbols indexed.`,
+        },
+        stages: completedStages,
+      });
+
+      return {
+        projectId: result.analysis.projectId,
+        analysis: result.analysis,
+        skippedFiles: result.skippedFiles,
+        warnings: result.warnings,
       };
+    } catch (err) {
+      if (this.activeSessionId === sessionId) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const isCancelled = errorMsg.includes('cancelled');
+
+        if (isCancelled) {
+          this.cancelActiveAnalysis(errorMsg);
+        } else {
+          const formattedError: AnalysisErrorDetails = {
+            title: 'Repository analysis failed',
+            message: errorMsg,
+            stage: this.sessionState.currentStage,
+            recoveryAction:
+              'Check that the archive contains uncorrupted JavaScript or TypeScript source code, or retry with a different archive.',
+            canRetry: true,
+            technicalDetails: err instanceof Error ? err.stack : undefined,
+          };
+
+          const failedStages = this.sessionState.stages.map((s) =>
+            s.id === this.sessionState.currentStage ? { ...s, status: 'failed' as const } : s
+          );
+
+          this.notify({
+            status: 'failed',
+            error: formattedError,
+            canCancel: false,
+            canRetry: true,
+            stages: failedStages,
+            progress: {
+              current: 0,
+              total: 100,
+              message: errorMsg,
+            },
+          });
+        }
+      }
+      throw err;
     }
-
-    // Persist to local project store (IndexedDB + in-memory cache)
-    await localProjectStore.saveProject(result.analysis);
-
-    return {
-      projectId: result.analysis.projectId,
-      analysis: result.analysis,
-      skippedFiles: result.skippedFiles,
-      warnings: result.warnings,
-    };
   }
 
   /**
@@ -263,8 +596,15 @@ export class BrowserAnalysisService {
     files: Record<string, FileRecord>,
     onProgress?: ProgressCallback
   ): Promise<{ projectId: string; analysis: ProjectAnalysis }> {
+    const sessionId = this.activeSessionId || `session_${Date.now()}`;
     const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.currentJobId = jobId;
+
     let analysis: ProjectAnalysis;
+
+    if (!this.worker && typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      this.initWorker();
+    }
 
     if (this.workerAvailable && this.worker) {
       const res = await new Promise<{
@@ -289,7 +629,14 @@ export class BrowserAnalysisService {
       analysis = res.analysis;
     } else {
       const analyzer = new CodebaseAnalyzer();
-      analysis = analyzer.analyzeProject(projectName, files, onProgress);
+      analysis = await analyzer.analyzeProjectAsync(projectName, files, onProgress, {
+        signal: this.activeAbortController?.signal,
+      });
+    }
+
+    // Stale session protection
+    if (this.activeSessionId && this.activeSessionId !== sessionId) {
+      throw new Error('Analysis superseded by a newer session.');
     }
 
     await localProjectStore.saveProject(analysis);
@@ -306,95 +653,268 @@ export class BrowserAnalysisService {
     token?: string,
     onProgress?: ProgressCallback
   ): Promise<{ projectId: string; analysis: ProjectAnalysis; cached?: boolean }> {
-    onProgress?.('connecting', {
-      current: 5,
-      total: 100,
-      message: `Connecting to GitHub for ${owner}/${repo}@${branch}...`,
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.activeSessionId = sessionId;
+
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {}
+    }
+    this.activeAbortController = new AbortController();
+
+    this.lastAnalysisParams = { type: 'github', owner, repo, branch, token };
+
+    const initialStages: AnalysisStageProgress[] = [
+      { id: 'connecting', name: 'GitHub connection', status: 'running' },
+      { id: 'fetching', name: 'Git tree & files streaming', status: 'pending' },
+      { id: 'parsing', name: 'AST parsing', status: 'pending' },
+      { id: 'resolving', name: 'Cross-module relationships', status: 'pending' },
+      { id: 'centrality', name: 'Graph centrality', status: 'pending' },
+      { id: 'dependencies', name: 'Dependency intelligence', status: 'pending' },
+      { id: 'finalisation', name: 'Finalisation', status: 'pending' },
+    ];
+
+    const sessionStartTime = performance.now();
+    this.notify({
+      status: 'running',
+      sessionId,
+      projectName: `${owner}/${repo}`,
+      currentStage: 'connecting',
+      progress: { current: 5, total: 100, message: `Connecting to GitHub for ${owner}/${repo}@${branch}...` },
+      stages: initialStages,
+      isPartial: false,
+      error: null,
+      startTime: sessionStartTime,
+      canCancel: true,
+      canRetry: false,
     });
 
-    // 1. Resolve commit SHA for deduplication check
-    let commitSha: string | null = null;
+    const updateStageProgress = (
+      stageId: string,
+      prog: { current: number; total: number; message: string }
+    ) => {
+      if (this.activeSessionId !== sessionId) return;
+      onProgress?.(stageId, prog);
+
+      const stages = this.sessionState.stages.map((s) => {
+        const currentIndex = initialStages.findIndex((x) => x.id === stageId);
+        const thisIndex = initialStages.findIndex((x) => x.id === s.id);
+        if (s.id === stageId) {
+          return { ...s, status: 'running' as const, current: prog.current, total: prog.total, message: prog.message };
+        }
+        if (thisIndex < currentIndex) {
+          return { ...s, status: 'completed' as const };
+        }
+        if (thisIndex > currentIndex) {
+          return { ...s, status: 'pending' as const };
+        }
+        return s;
+      });
+
+      this.notify({
+        currentStage: stageId,
+        progress: prog,
+        stages,
+      });
+    };
+
     try {
-      const commit = await browserGitHubClient.getLatestCommit(owner, repo, branch, token);
-      commitSha = commit.sha;
-    } catch {
-      // Continue to fetch if commit listing failed
-    }
+      updateStageProgress('connecting', {
+        current: 5,
+        total: 100,
+        message: `Connecting to GitHub for ${owner}/${repo}@${branch}...`,
+      });
 
-    // 2. Check cached analysis in IndexedDB / memory
-    if (commitSha) {
-      const cached = await localProjectStore.findProjectByCommit(owner, repo, commitSha);
-      if (cached) {
-        onProgress?.('completed', {
-          current: 100,
-          total: 100,
-          message: `Loaded cached analysis for commit ${commitSha.slice(0, 7)}.`,
-        });
-        return { projectId: cached.projectId, analysis: cached, cached: true };
+      // 1. Resolve commit SHA for deduplication check
+      let commitSha: string | null = null;
+      try {
+        const commit = await browserGitHubClient.getLatestCommit(owner, repo, branch, token);
+        commitSha = commit.sha;
+      } catch {
+        // Continue to fetch if commit listing failed
       }
-    }
 
-    // 3. Tree-based source file download pinned to commit SHA
-    onProgress?.('fetching', {
-      current: 15,
-      total: 100,
-      message: `Scanning Git tree and streaming source files for ${owner}/${repo}@${branch}...`,
-    });
+      if (this.activeSessionId !== sessionId) {
+        throw new Error('Analysis cancelled by user.');
+      }
 
-    const { files, commitSha: resolvedSha, warnings, skippedFiles } =
-      await browserGitHubClient.fetchRepositorySourceFiles({
+      // 2. Check cached analysis in IndexedDB / memory
+      if (commitSha) {
+        const cached = await localProjectStore.findProjectByCommit(owner, repo, commitSha);
+        if (cached) {
+          updateStageProgress('completed', {
+            current: 100,
+            total: 100,
+            message: `Loaded cached analysis for commit ${commitSha.slice(0, 7)}.`,
+          });
+
+          this.notify({
+            status: 'completed',
+            currentStage: 'completed',
+            projectId: cached.projectId,
+            canCancel: false,
+            canRetry: false,
+            stages: this.sessionState.stages.map((s) => ({ ...s, status: 'completed' as const })),
+            progress: {
+              current: cached.stats.totalFiles,
+              total: cached.stats.totalFiles,
+              message: `Loaded cached analysis for commit ${commitSha.slice(0, 7)}.`,
+            },
+          });
+
+          return { projectId: cached.projectId, analysis: cached, cached: true };
+        }
+      }
+
+      // 3. Tree-based source file download pinned to commit SHA
+      updateStageProgress('fetching', {
+        current: 15,
+        total: 100,
+        message: `Scanning Git tree and streaming source files for ${owner}/${repo}@${branch}...`,
+      });
+
+      const { files, commitSha: resolvedSha, warnings, skippedFiles } =
+        await browserGitHubClient.fetchRepositorySourceFiles({
+          owner,
+          repo,
+          branch,
+          token,
+          signal: this.activeAbortController?.signal,
+          onProgress: (stage, prog) => updateStageProgress(stage, prog),
+        });
+
+      if (this.activeSessionId !== sessionId) {
+        throw new Error('Analysis cancelled by user.');
+      }
+
+      const actualSha = commitSha || resolvedSha;
+
+      // 4. Ingest and analyze
+      updateStageProgress('parsing', {
+        current: 0,
+        total: Object.keys(files).length,
+        message: `Analyzing syntax & AST for ${Object.keys(files).length} files...`,
+      });
+
+      const { analysis } = await this.analyzeFiles(
+        `${owner}/${repo}`,
+        files,
+        (stage, prog) => updateStageProgress(stage, prog)
+      );
+
+      if (this.activeSessionId !== sessionId) {
+        throw new Error('Analysis superseded by a newer session.');
+      }
+
+      // Record verified Git revision metadata (PAT is NEVER stored in gitMetadata)
+      analysis.projectName = `${owner}/${repo}`;
+      analysis.gitMetadata = {
         owner,
         repo,
         branch,
-        token,
-        onProgress,
+        commitSha: actualSha,
+        commitUrl: `https://github.com/${owner}/${repo}/commit/${actualSha}`,
+        repoUrl: `https://github.com/${owner}/${repo}`,
+      };
+
+      for (const sf of skippedFiles) {
+        analysis.warnings.push({
+          filePath: sf.path,
+          message: sf.reason,
+          severity: 'info',
+        });
+      }
+      for (const w of warnings) {
+        analysis.warnings.push({
+          message: w,
+          severity: 'warning',
+        });
+      }
+
+      analysis.skippedFiles = skippedFiles;
+      await localProjectStore.saveProject(analysis);
+
+      const totalDuration = Math.round(performance.now() - sessionStartTime);
+      const isPartial = Boolean(
+        analysis.isPartial ||
+        skippedFiles.length > 0 ||
+        warnings.length > 0
+      );
+
+      const partialReason = isPartial
+        ? analysis.partialReason ||
+          `${skippedFiles.length} file(s) or objects were skipped or truncated by GitHub limits.`
+        : undefined;
+
+      const completedStages = this.sessionState.stages.map((s) => ({
+        ...s,
+        status: 'completed' as const,
+      }));
+
+      this.notify({
+        status: isPartial ? 'partial' : 'completed',
+        currentStage: 'completed',
+        isPartial,
+        partialReason,
+        projectId: analysis.projectId,
+        totalDurationMs: totalDuration,
+        performanceMetrics: analysis.analysisMetadata,
+        canCancel: false,
+        canRetry: false,
+        progress: {
+          current: analysis.stats.totalFiles,
+          total: analysis.stats.totalFiles,
+          message: `GitHub repository analyzed in ${(totalDuration / 1000).toFixed(1)}s. ${analysis.stats.totalSymbols} symbols indexed.`,
+        },
+        stages: completedStages,
       });
 
-    const actualSha = commitSha || resolvedSha;
+      return { projectId: analysis.projectId, analysis, cached: false };
+    } catch (err) {
+      if (this.activeSessionId === sessionId) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const isCancelled = errorMsg.includes('cancelled');
 
-    // 4. Ingest and analyze
-    onProgress?.('parsing', {
-      current: 0,
-      total: Object.keys(files).length,
-      message: `Analyzing syntax & AST for ${Object.keys(files).length} files...`,
-    });
+        if (isCancelled) {
+          this.cancelActiveAnalysis(errorMsg);
+        } else {
+          let recoveryAction = 'Check the repository URL and branch, or export and upload a ZIP archive.';
+          if (errorMsg.includes('rate limit')) {
+            recoveryAction = 'Provide a GitHub Personal Access Token to get 5,000 requests/hour, or use ZIP upload.';
+          } else if (errorMsg.includes('unauthorized') || errorMsg.includes('401')) {
+            recoveryAction = 'Check that your Personal Access Token is valid and has "repo" permissions.';
+          }
 
-    const { analysis } = await this.analyzeFiles(
-      `${owner}/${repo}`,
-      files,
-      onProgress
-    );
+          const formattedError: AnalysisErrorDetails = {
+            title: 'GitHub repository import failed',
+            message: errorMsg,
+            stage: this.sessionState.currentStage,
+            recoveryAction,
+            canRetry: true,
+            technicalDetails: err instanceof Error ? err.stack : undefined,
+          };
 
-    // Record verified Git revision metadata (PAT is NEVER stored in gitMetadata)
-    analysis.projectName = `${owner}/${repo}`;
-    analysis.gitMetadata = {
-      owner,
-      repo,
-      branch,
-      commitSha: actualSha,
-      commitUrl: `https://github.com/${owner}/${repo}/commit/${actualSha}`,
-      repoUrl: `https://github.com/${owner}/${repo}`,
-    };
+          const failedStages = this.sessionState.stages.map((s) =>
+            s.id === this.sessionState.currentStage ? { ...s, status: 'failed' as const } : s
+          );
 
-    // Attach any warnings and skipped file records
-    for (const sf of skippedFiles) {
-      analysis.warnings.push({
-        filePath: sf.path,
-        message: sf.reason,
-        severity: 'info',
-      });
+          this.notify({
+            status: 'failed',
+            error: formattedError,
+            canCancel: false,
+            canRetry: true,
+            stages: failedStages,
+            progress: {
+              current: 0,
+              total: 100,
+              message: errorMsg,
+            },
+          });
+        }
+      }
+      throw err;
     }
-    for (const w of warnings) {
-      analysis.warnings.push({
-        message: w,
-        severity: 'warning',
-      });
-    }
-
-    // Update project in local store with verified commit revision key
-    await localProjectStore.saveProject(analysis);
-
-    return { projectId: analysis.projectId, analysis, cached: false };
   }
 
   public async getProject(projectId: string): Promise<ProjectAnalysis | null> {
