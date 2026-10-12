@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface FeatureDetailPanelProps {
@@ -181,6 +182,71 @@ export const FeatureDetailPanel: React.FC<FeatureDetailPanelProps> = ({
           )}
         </div>
       </div>
+
+      {/* Analysis Limitations & Caveats Disclosure */}
+      {feature.caveats && feature.caveats.length > 0 && (
+        <div
+          style={{
+            padding: '12px 14px',
+            background: 'var(--warning-bg)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--warning-amber)' }}>
+            <AlertTriangle size={14} /> Analysis Limitations & Caveats
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {feature.caveats.map((c, idx) => (
+              <li key={idx}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Static Code Evidence & Trust Basis Card */}
+      {feature.trustExplanation && (
+        <div
+          style={{
+            padding: '12px 14px',
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+              Evidence & Trust Basis
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              Static AST Verification
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
+            <div style={{ padding: '8px 10px', background: 'var(--panel-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Direct AST Findings</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{feature.trustExplanation.directEvidenceCount}</div>
+            </div>
+            <div style={{ padding: '8px 10px', background: 'var(--panel-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Statically Resolved</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--success-teal)' }}>{feature.trustExplanation.staticallyResolvedCount}</div>
+            </div>
+            <div style={{ padding: '8px 10px', background: 'var(--panel-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Inferred Links</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--primary-blue)' }}>{feature.trustExplanation.inferredCount}</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+            Static code path representation; does not guarantee runtime production dispatch or branch execution.
+          </div>
+        </div>
+      )}
 
       {/* Stakeholder Perspective: Collapsible technical evidence disclosure */}
       {audienceMode === 'stakeholder' && (

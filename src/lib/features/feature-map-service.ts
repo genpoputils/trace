@@ -344,6 +344,75 @@ export function extractArchitectureGroups(analysis: ProjectAnalysis): Architectu
 }
 
 /**
+ * Compute trust explanation, evidence breakdown, and caveats for a feature
+ */
+function computeFeatureTrust(
+  feature: CodebaseFeature,
+  analysis: ProjectAnalysis
+): { caveats: string[]; trustExplanation: NonNullable<CodebaseFeature['trustExplanation']> } {
+  const caveats: string[] = [];
+  const limitations: string[] = [];
+
+  // 1. Direct Evidence vs Inferred
+  const directEntities = feature.evidence.filter(
+    (ev) => ev.entityKind === 'route' || ev.entityKind === 'component' || ev.entityKind === 'db_query'
+  );
+  const directEvidenceCount = directEntities.length;
+
+  // 2. Count resolved vs inferred steps
+  let staticallyResolvedCount = 0;
+  let inferredCount = 0;
+
+  for (const step of feature.flowSteps) {
+    if (step.confidence === 'statically_resolved') {
+      staticallyResolvedCount++;
+    } else {
+      inferredCount++;
+    }
+  }
+
+  // Check if any supporting file in evidence produced an analysis error or warning
+  const featureFiles = new Set(feature.evidence.map((e) => e.filePath));
+  const warnings = analysis.warnings || [];
+  const errorFiles = new Set(
+    warnings.filter((w) => w.severity === 'error' && w.filePath).map((w) => w.filePath!)
+  );
+
+  let hasIncompleteAnalysis = false;
+  for (const f of featureFiles) {
+    if (errorFiles.has(f)) {
+      hasIncompleteAnalysis = true;
+      caveats.push(`AST parsing errors occurred in supporting file ${f}; some internal relationships may be missing.`);
+      break;
+    }
+  }
+
+  if (analysis.isPartial && !hasIncompleteAnalysis) {
+    hasIncompleteAnalysis = true;
+    caveats.push('Repository was flagged as partial analysis; some dependencies or call paths may be incomplete.');
+  }
+
+  // Check unresolved entry points or calls
+  if (feature.category === 'routes_api' && (!feature.entryPoint || feature.flowSteps.length <= 1)) {
+    caveats.push('Route request handler could not be statically connected; handler may use dynamic dispatch.');
+  }
+
+  // Runtime disclaimer
+  limitations.push('Static code analysis identifies structural code relationships, not guaranteed production runtime invocation.');
+
+  return {
+    caveats,
+    trustExplanation: {
+      directEvidenceCount,
+      staticallyResolvedCount,
+      inferredCount,
+      hasIncompleteAnalysis,
+      limitations,
+    },
+  };
+}
+
+/**
  * 3. Infer Feature Map (Deterministic Capability Clustering)
  */
 export function inferFeatureMap(analysis: ProjectAnalysis): CodebaseFeature[] {
@@ -848,6 +917,13 @@ export function inferFeatureMap(analysis: ProjectAnalysis): CodebaseFeature[] {
         }
       }
     }
+  }
+
+  // Enrich features with trust explanation and caveats
+  for (const feat of features) {
+    const trust = computeFeatureTrust(feat, analysis);
+    feat.caveats = trust.caveats;
+    feat.trustExplanation = trust.trustExplanation;
   }
 
   // Update Cache

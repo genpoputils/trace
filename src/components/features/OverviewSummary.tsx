@@ -8,12 +8,15 @@ import {
   GitCommit,
   CheckCircle2,
   AlertTriangle,
+  AlertOctagon,
+  HelpCircle,
   ChevronDown,
   ChevronUp,
   Info,
   ExternalLink,
 } from 'lucide-react';
 import { formatRelativeTime } from '@/components/layout/RepositorySelector';
+import { deriveAnalysisQuality } from '@/lib/quality/analysis-quality-service';
 
 interface OverviewSummaryProps {
   analysis: ProjectAnalysis;
@@ -30,8 +33,48 @@ export const OverviewSummary: React.FC<OverviewSummaryProps> = ({
   const [evidenceExpanded, setEvidenceExpanded] = useState<boolean>(false);
 
   const git = analysis.gitMetadata;
-  const isPartial = !!analysis.isPartial;
+  const quality = deriveAnalysisQuality(analysis);
   const shortSha = git?.commitSha ? git.commitSha.slice(0, 7) : undefined;
+
+  const getStatusBadge = () => {
+    switch (quality.status) {
+      case 'complete':
+        return {
+          icon: <CheckCircle2 size={13} />,
+          text: 'Analysis Complete',
+          bg: 'rgba(16, 185, 129, 0.1)',
+          color: 'var(--success-teal)',
+          border: 'rgba(16, 185, 129, 0.3)',
+        };
+      case 'partial':
+        return {
+          icon: <AlertTriangle size={13} />,
+          text: 'Partial Analysis',
+          bg: 'var(--warning-bg)',
+          color: 'var(--warning-amber)',
+          border: 'rgba(245, 158, 11, 0.3)',
+        };
+      case 'degraded':
+        return {
+          icon: <AlertOctagon size={13} />,
+          text: 'Degraded',
+          bg: 'rgba(239, 68, 68, 0.1)',
+          color: 'var(--error-red, #ef4444)',
+          border: 'rgba(239, 68, 68, 0.3)',
+        };
+      case 'unknown':
+      default:
+        return {
+          icon: <HelpCircle size={13} />,
+          text: 'Unknown',
+          bg: 'var(--bg-tertiary)',
+          color: 'var(--text-muted)',
+          border: 'var(--border-color)',
+        };
+    }
+  };
+
+  const statusBadge = getStatusBadge();
 
   return (
     <section
@@ -139,22 +182,14 @@ export const OverviewSummary: React.FC<OverviewSummaryProps> = ({
               fontWeight: 600,
               padding: '4px 10px',
               borderRadius: 'var(--radius-sm)',
-              background: isPartial ? 'var(--warning-bg)' : 'rgba(16, 185, 129, 0.1)',
-              color: isPartial ? 'var(--warning-amber)' : 'var(--success-teal)',
-              border: `1px solid ${isPartial ? 'rgba(245, 158, 11, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
+              background: statusBadge.bg,
+              color: statusBadge.color,
+              border: `1px solid ${statusBadge.border}`,
             }}
+            title={quality.statusExplanation}
           >
-            {isPartial ? (
-              <>
-                <AlertTriangle size={13} />
-                <span>Partial Analysis</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 size={13} />
-                <span>Analysis Complete</span>
-              </>
-            )}
+            {statusBadge.icon}
+            <span>{statusBadge.text}</span>
           </div>
 
           {analysis.analyzedAt && (
