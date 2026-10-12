@@ -12,6 +12,8 @@ import { AudienceModeSwitch } from '@/components/features/AudienceModeSwitch';
 import { OverviewSummary } from '@/components/features/OverviewSummary';
 import { ArchitectureSummary } from '@/components/features/ArchitectureSummary';
 import { FeatureMapView } from '@/components/features/FeatureMapView';
+import { AnalysisQualitySection } from '@/components/features/AnalysisQualitySection';
+import { WorkspaceTabId } from '@/components/layout/AppNavigationRail';
 import {
   FileText,
   Code,
@@ -21,14 +23,14 @@ import {
   Award,
   ArrowUpRight,
   Sparkles,
-  Info,
   MapPin,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface DashboardViewProps {
   analysis: ProjectAnalysis;
   onSelectEntity: (entityId: string) => void;
-  onNavigateTab: (tab: 'graph' | 'paths' | 'dataflow' | 'impact' | 'overview' | 'dependencies' | 'ai') => void;
+  onNavigateTab: (tab: WorkspaceTabId) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -55,13 +57,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   const featureMapRef = useRef<HTMLDivElement>(null);
+  const qualitySectionRef = useRef<HTMLDivElement>(null);
 
   // Deterministic Overview & Architecture Inference
   const overview = useMemo(() => generateCodebaseOverview(analysis), [analysis]);
   const archGroups = useMemo(() => extractArchitectureGroups(analysis), [analysis]);
   const features = useMemo(() => inferFeatureMap(analysis), [analysis]);
-
-  const warnings = analysis.warnings || [];
 
   const handleExploreGraph = (entityId: string) => {
     onSelectEntity(entityId);
@@ -70,6 +71,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const scrollToFeatureMap = () => {
     featureMapRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const scrollToQuality = () => {
+    qualitySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   return (
@@ -101,6 +106,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              onClick={scrollToQuality}
+              className="tool-btn"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+            >
+              <ShieldCheck size={14} color="var(--primary-blue)" /> Quality & Trust
+            </button>
             <button
               type="button"
               onClick={scrollToFeatureMap}
@@ -262,33 +275,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Warnings / Diagnostics Banner */}
-        {warnings.length > 0 && (
-          <div
-            style={{
-              padding: 16,
-              background: 'var(--warning-bg)',
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              borderRadius: 'var(--radius-md)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: 'var(--warning-amber)' }}>
-              <Info size={16} /> Analysis Notes & Diagnostics ({warnings.length})
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 100, overflowY: 'auto' }}>
-              {warnings.map((w, idx) => (
-                <div key={idx} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  • {w.filePath ? `[${w.filePath}] ` : ''}{w.message}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* 3. Analysis Quality, Coverage & Trust Section */}
+        <div ref={qualitySectionRef}>
+          <AnalysisQualitySection
+            analysis={analysis}
+            onSelectEntity={onSelectEntity}
+            onNavigateTab={onNavigateTab}
+          />
+        </div>
 
-        {/* 3. Discovered Application Structure (Architecture Summary) */}
+        {/* 4. Discovered Application Structure (Architecture Summary) */}
         <ArchitectureSummary
           groups={archGroups}
           onSelectEntity={onSelectEntity}

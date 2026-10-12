@@ -57,6 +57,14 @@ export interface CodebaseFeature {
   flowSteps: FeatureFlowStep[];
   isInferred: boolean;
   sharedResources?: string[];
+  caveats?: string[];
+  trustExplanation?: {
+    directEvidenceCount: number;
+    staticallyResolvedCount: number;
+    inferredCount: number;
+    hasIncompleteAnalysis: boolean;
+    limitations: string[];
+  };
 }
 
 export interface OverviewAnalysisSummary {

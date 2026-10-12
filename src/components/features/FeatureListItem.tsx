@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { CodebaseFeature } from '@/lib/features/feature-map-types';
-import { Route, LayoutGrid, Zap, Database, Layers } from 'lucide-react';
+import { Route, LayoutGrid, Zap, Database, Layers, AlertTriangle } from 'lucide-react';
 
 interface FeatureListItemProps {
   feature: CodebaseFeature;
@@ -102,21 +102,39 @@ export const FeatureListItem: React.FC<FeatureListItemProps> = ({
           </span>
         </div>
 
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            color: conf.color,
-            background: conf.bg,
-            padding: '2px 6px',
-            borderRadius: 'var(--radius-sm)',
-            flexShrink: 0,
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-          }}
-        >
-          {feature.confidence}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {feature.caveats && feature.caveats.length > 0 && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                fontSize: 10,
+                color: 'var(--warning-amber)',
+                background: 'rgba(245, 158, 11, 0.1)',
+                padding: '2px 5px',
+                borderRadius: 'var(--radius-sm)',
+              }}
+              title={feature.caveats.join(' • ')}
+            >
+              <AlertTriangle size={10} /> Caveat
+            </span>
+          )}
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: conf.color,
+              background: conf.bg,
+              padding: '2px 6px',
+              borderRadius: 'var(--radius-sm)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
+            {feature.confidence}
+          </span>
+        </div>
       </div>
 
       {/* One-line Summary */}
